@@ -1,7 +1,12 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/Vujovic0/NASP2024/console"
+)
 
 func main() {
-	fmt.Println("Hello World")
+	fmt.Println("--- NASP PROJECT ---")
+	console.Start()
 }
