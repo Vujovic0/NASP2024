@@ -1,8 +1,12 @@
 package hyperloglog
 
 import (
+	"encoding/binary"
+	"fmt"
+	"hash/fnv"
 	"math"
 	"math/bits"
+	"os"
 )
 
 const (
@@ -18,15 +22,15 @@ func trailingZeroBits(value uint64) int {
 	return bits.TrailingZeros64(value)
 }
 
-type HLL struct {
-	m   uint64
-	p   uint8
-	reg []uint8
+type HyperLogLog struct {
+	m        uint64
+	p        uint8
+	register []uint8
 }
 
-func (hll *HLL) Estimate() float64 {
+func (hll *HyperLogLog) Estimate() float64 {
 	sum := 0.0
-	for _, val := range hll.reg {
+	for _, val := range hll.register {
 		sum += math.Pow(math.Pow(2.0, float64(val)), -1)
 	}
 
@@ -43,12 +47,83 @@ func (hll *HLL) Estimate() float64 {
 	return estimation
 }
 
-func (hll *HLL) emptyCount() int {
+func (hll *HyperLogLog) emptyCount() int {
 	sum := 0
-	for _, val := range hll.reg {
+	for _, val := range hll.register {
 		if val == 0 {
 			sum++
 		}
 	}
 	return sum
+}
+
+func NewHyperLogLog(p uint8) *HyperLogLog {
+	var m uint64 = 1 << p
+	register := make([]uint8, m)
+	return &HyperLogLog{p: p, m: m, register: register}
+}
+
+func MakeHyperLoLog(p uint8, array []string) *HyperLogLog {
+	hll := NewHyperLogLog(p)
+	UpdateHyperLogLog(hll, p, array)
+	return hll
+}
+
+func UpdateHyperLogLog(hll *HyperLogLog, p uint8, array []string) *HyperLogLog {
+	var i int = int(p)
+	if i < HLL_MIN_PRECISION || i > HLL_MAX_PRECISION { // CHECKING THE VALIDITY OF PRECISION
+		fmt.Println("Precision is not valid, choose value in the range: ", HLL_MIN_PRECISION, " to ", HLL_MAX_PRECISION, "!")
+		return hll
+	}
+	for _, data := range array {
+		h := fnv.New64a()
+		h.Write([]byte(data))
+		hashValue := h.Sum64()
+		newP := uint64(p)
+		bucket := firstKbits(hashValue, newP) % hll.m
+		value := trailingZeroBits(hashValue)
+		valueUint8 := uint8(value)
+		if hll.register[bucket] < valueUint8 {
+			hll.register[bucket] = valueUint8
+		}
+	}
+	return hll
+}
+
+func GetNumberOfDifferentValues(hll *HyperLogLog) int {
+	return int(hll.Estimate())
+}
+
+func Serialize(hll *HyperLogLog, filename string) {
+	file, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		fmt.Println("Error while opening file: ", err)
+		return
+	}
+	defer file.Close()
+	// Write the precision
+	if err := binary.Write(file, binary.LittleEndian, hll.p); err != nil {
+		fmt.Println("Error while writing precision: ", err)
+		return
+	}
+	// Write the register
+	if err := binary.Write(file, binary.LittleEndian, hll.register); err != nil {
+		fmt.Println("Error while writing register: ", err)
+		return
+	}
+}
+
+func Deserialize(file *os.File) (*HyperLogLog, error) {
+	hll := &HyperLogLog{}
+	// Read the precision p (1 byte)
+	if err := binary.Read(file, binary.LittleEndian, &hll.p); err != nil {
+		return nil, fmt.Errorf("error while reading precision: %v", err)
+	}
+	hll.m = 1 << hll.p // SAME AS WRITING 2^p
+	hll.register = make([]uint8, hll.m)
+	// Read the register values (m bytes)
+	if err := binary.Read(file, binary.LittleEndian, hll.register); err != nil {
+		return nil, fmt.Errorf("error while reading register: %v", err)
+	}
+	return hll, nil
 }

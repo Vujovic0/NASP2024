@@ -10,6 +10,10 @@ type HashWithSeed struct {
 	Seed []byte
 }
 
+func Seeds(hash *HashWithSeed) []byte {
+	return hash.Seed
+}
+
 func (h HashWithSeed) Hash(data []byte) uint64 {
 	fn := md5.New()
 	fn.Write(append(data, h.Seed...))
