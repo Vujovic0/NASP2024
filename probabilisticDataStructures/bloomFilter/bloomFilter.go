@@ -3,18 +3,23 @@ package bloomFilter
 import (
 	"encoding/binary"
 	"fmt"
+	"math"
 	"os"
+	"strings"
 )
 
 type BloomFilter struct {
 	register     []byte
 	registerSize uint
 	hash         []HashWithSeed
+	numHashes    int
+	stateCheck   int
+	numOfElem    int
 }
 
 func NewBloomFilter(m uint, hash []HashWithSeed) *BloomFilter {
 	register := make([]byte, m)
-	return &BloomFilter{hash: hash, register: register, registerSize: m}
+	return &BloomFilter{hash: hash, register: register, registerSize: m, stateCheck: int(float64(m) / math.Log(float64(len(hash))) * 0.6), numHashes: len(hash), numOfElem: 0}
 }
 
 func MakeBloomFilter(array []string, falsePositive float64) *BloomFilter {
@@ -23,17 +28,7 @@ func MakeBloomFilter(array []string, falsePositive float64) *BloomFilter {
 	k := CalculateK(numberOfElem, m)
 	hash := CreateHashFunctions(k)
 	bf := NewBloomFilter(m, hash)
-	for _, data := range array {
-		for _, hfn := range bf.hash {
-			byteSlice := []byte(data)
-			hashValue := hfn.Hash(byteSlice)
-			bitIndex := hashValue % uint64(bf.registerSize*8)
-			byteIndex := bitIndex / 8
-			bitPosition := bitIndex % 8
-			bf.register[byteIndex] |= (1 << bitPosition)
-		}
-	}
-	return bf
+	return AddData(bf, array)
 }
 
 func SearchData(bf *BloomFilter, data string) bool {
@@ -48,6 +43,45 @@ func SearchData(bf *BloomFilter, data string) bool {
 		}
 	}
 	return true
+}
+
+// CHECKING HOW MUCH BITS ARE 1'S IN REGISTER TO SEE THE STATE OF BLOOM FILTER (ASSUMING IN REALITY- for better effectivness)
+// <50% --> GOOD
+// 50%-70& --> ACCEPTABLE
+// >70% --> BAD (high risk of colisions)
+func AddData(bf *BloomFilter, array []string) *BloomFilter {
+	startState := bf.numOfElem
+	confirm := true
+	for _, data := range array {
+		if bf.numOfElem > bf.stateCheck && confirm {
+			fmt.Printf("--WARNING--\nBloom filter is probably at great risk of collisions!\nOut of %d elements you already added %d. Do you want to continue? [y/n]\nYour answer: ", len(array), bf.numOfElem-startState)
+		inputLoop:
+			for {
+				var inputKey string
+				fmt.Scan(&inputKey)
+				inputKey = strings.TrimSpace(inputKey)
+				switch strings.ToLower(inputKey) {
+				case "y":
+					confirm = false
+					break inputLoop
+				case "n":
+					return bf // Return early if the user decides not to proceed
+				default:
+					fmt.Println("Your input is invalid! Please enter 'y' or 'n'...")
+				}
+			}
+		}
+		byteSlice := []byte(data)
+		for _, hfn := range bf.hash {
+			hashValue := hfn.Hash(byteSlice)
+			bitIndex := hashValue % uint64(bf.registerSize*8)
+			byteIndex := bitIndex / 8
+			bitPosition := bitIndex % 8
+			bf.register[byteIndex] |= (1 << bitPosition)
+		}
+		bf.numOfElem++
+	}
+	return bf
 }
 
 func Serialize(bf *BloomFilter, filename string) error {
