@@ -302,7 +302,7 @@ func (treeNode *BTreeNode) splitChild(i int, splitingNode *BTreeNode) {
 		node.keys[i] = splitingNode.keys[i+deg]
 	}
 
-	if splitingNode.isLeaf == false {
+	if !splitingNode.isLeaf {
 		for i := 0; i < deg; i++ {
 			node.children[i] = splitingNode.children[i+deg]
 		}
@@ -325,13 +325,13 @@ func (treeNode *BTreeNode) splitChild(i int, splitingNode *BTreeNode) {
 func (treeNode *BTreeNode) traverse() {
 	i := 0
 	for ; i < treeNode.n; i++ {
-		if treeNode.isLeaf == false {
+		if !treeNode.isLeaf {
 			treeNode.children[i].traverse()
 		}
 		fmt.Println("Value of a node ", treeNode.keys[i])
 	}
 
-	if treeNode.isLeaf == false {
+	if !treeNode.isLeaf {
 		treeNode.children[i].traverse()
 	}
 }
