@@ -15,6 +15,7 @@ const (
 	FILE_SIZE        = 10
 	FACTOR_MOVEMENT  = SEGMENT_SIZE*BLOCK_SIZE*PAGE_SIZE + 2*(1+PAGE_SIZE) // NUMBER OF BYTES IN PAGE PLUS NUMBER OF BYTES FOR HEADERS OF PAGES AND BLOCKS, EVERY PROCESS OF MAKING NEW PAGE REQUIRES POINTERS TO MOVE BY THIS VALUE
 	BLOCK_SIZE_BYTES = SEGMENT_SIZE*BLOCK_SIZE + 2                         // Size of block in bytes plus header
+	FILENAME         = "bufferPool.bin"
 )
 
 type BufferPool struct {
@@ -45,7 +46,7 @@ func ceil(a, b int) int {
 
 func flush(bufferPool *BufferPool) error {
 	filename := "data_file_" + strconv.Itoa(bufferPool.fileID) + ".bin"
-	file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	file, err := os.Create(filename)
 	if err != nil {
 		return fmt.Errorf("failed to open file: %v", err)
 	}
@@ -64,7 +65,7 @@ func flush(bufferPool *BufferPool) error {
 	bufferPool.flush = 2
 	bufferPool.blockId = 0
 	bufferPool.pageId = 0
-	bufferPool.fileID++ // Increment fileID for the next flush
+	bufferPool.fileID++
 
 	return nil
 }
@@ -174,4 +175,95 @@ func readPageFromDisk(pageId int, filename string) ([]byte, error) {
 	}
 
 	return pageData, nil
+}
+
+// Serialize method to save the BufferPool state and its buffer to a file
+func serialize(bufferPool *BufferPool) error {
+	file, err := os.OpenFile(FILENAME, os.O_CREATE|os.O_WRONLY, 0666)
+	if err != nil {
+		return fmt.Errorf("failed to open file: %v", err)
+	}
+	defer file.Close()
+
+	// Write the basic BufferPool information (start, end, flush, etc.)
+	if err := binary.Write(file, binary.LittleEndian, int32(bufferPool.start)); err != nil {
+		return fmt.Errorf("failed to write start to file: %v", err)
+	}
+	if err := binary.Write(file, binary.LittleEndian, int32(bufferPool.end)); err != nil {
+		return fmt.Errorf("failed to write end to file: %v", err)
+	}
+	if err := binary.Write(file, binary.LittleEndian, int32(bufferPool.flush)); err != nil {
+		return fmt.Errorf("failed to write flush to file: %v", err)
+	}
+	if err := binary.Write(file, binary.LittleEndian, int32(bufferPool.blockId)); err != nil {
+		return fmt.Errorf("failed to write blockId to file: %v", err)
+	}
+	if err := binary.Write(file, binary.LittleEndian, int32(bufferPool.pageId)); err != nil {
+		return fmt.Errorf("failed to write pageId to file: %v", err)
+	}
+	if err := binary.Write(file, binary.LittleEndian, int32(bufferPool.fileID)); err != nil {
+		return fmt.Errorf("failed to write fileID to file: %v", err)
+	}
+
+	// Write the buffer contents
+	bufferSize := len(bufferPool.buffer)
+	if err := binary.Write(file, binary.LittleEndian, int32(bufferSize)); err != nil {
+		return fmt.Errorf("failed to write buffer size to file: %v", err)
+	}
+	if _, err := file.Write(bufferPool.buffer); err != nil {
+		return fmt.Errorf("failed to write buffer contents to file: %v", err)
+	}
+
+	return nil
+}
+
+// Deserialize method to restore the BufferPool state from a file
+func deserialize() (*BufferPool, error) {
+	file, err := os.Open(FILENAME)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open file: %v", err)
+	}
+	defer file.Close()
+
+	// Read the basic BufferPool information
+	var start, end, flush, blockId, pageId, fileID int32
+	if err := binary.Read(file, binary.LittleEndian, &start); err != nil {
+		return nil, fmt.Errorf("failed to read start from file: %v", err)
+	}
+	if err := binary.Read(file, binary.LittleEndian, &end); err != nil {
+		return nil, fmt.Errorf("failed to read end from file: %v", err)
+	}
+	if err := binary.Read(file, binary.LittleEndian, &flush); err != nil {
+		return nil, fmt.Errorf("failed to read flush from file: %v", err)
+	}
+	if err := binary.Read(file, binary.LittleEndian, &blockId); err != nil {
+		return nil, fmt.Errorf("failed to read blockId from file: %v", err)
+	}
+	if err := binary.Read(file, binary.LittleEndian, &pageId); err != nil {
+		return nil, fmt.Errorf("failed to read pageId from file: %v", err)
+	}
+	if err := binary.Read(file, binary.LittleEndian, &fileID); err != nil {
+		return nil, fmt.Errorf("failed to read fileID from file: %v", err)
+	}
+
+	// Read the buffer size and allocate the buffer
+	var bufferSize int32
+	if err := binary.Read(file, binary.LittleEndian, &bufferSize); err != nil {
+		return nil, fmt.Errorf("failed to read buffer size from file: %v", err)
+	}
+	buffer := make([]byte, bufferSize)
+	if _, err := file.Read(buffer); err != nil {
+		return nil, fmt.Errorf("failed to read buffer contents from file: %v", err)
+	}
+
+	// Create and return the BufferPool instance
+	return &BufferPool{
+		start:   int(start),
+		end:     int(end),
+		flush:   int(flush),
+		blockId: int(blockId),
+		pageId:  int(pageId),
+		fileID:  int(fileID),
+		buffer:  buffer,
+	}, nil
 }
