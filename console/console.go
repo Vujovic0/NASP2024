@@ -1,8 +1,19 @@
 package console
 
-import "fmt"
+import (
+	"NASP2024/wal"
+	"fmt"
+)
 
 func Start() {
+	blockSize := 110 // SIZE OF WAL BLOCK IN BYTES
+	segmentSize := 1 // NUMBER OF BLOCKS IN SINGLE WAL FILE
+	walFactory := wal.NewWAL(blockSize, segmentSize, 0, blockSize)
+	if walFactory == nil {
+		fmt.Println("WAL was not initialized successfully")
+	} else {
+		fmt.Println("WAL was inizialized successfully")
+	}
 	for {
 		fmt.Print("--Main menu--\n 1. PUT\n 2. GET\n 3. DELETE\n 4. INFO\n 0. EXIT\n Choose one of the options above: ")
 		var input int
@@ -13,7 +24,7 @@ func Start() {
 		}
 		switch input {
 		case 1:
-			Put()
+			Put(walFactory)
 		case 2:
 			Get()
 		case 3:
@@ -30,7 +41,7 @@ func Start() {
 	}
 }
 
-func Put() (string, string) {
+func Put(walFactory *wal.WAL) (string, string) {
 	fmt.Println("Enter the key: ")
 	var inputKey string
 	fmt.Scan(&inputKey)
@@ -40,6 +51,16 @@ func Put() (string, string) {
 	binInputValue := stringToBin(inputValue)
 	fmt.Println(binInputValue) // Writing the binary form, just for the sakes of not giving error
 	// MISSING THE APPROVE FROM WAL, DATA NEED TO BE SEND TO THE WAL WERE IT WILL BE STORED TILL DISMISED TO THE DISK
+	if walFactory == nil {
+		fmt.Println("WAL nije uspešno inicijalizovan")
+	}
+	// ADDENTRY RETURN TRUE IF WAL WAS WRITTEN
+	if (*walFactory).AddEntry(inputKey, inputValue) {
+		fmt.Println("Uspesno unet WAL")
+	} else {
+		fmt.Println("Neuspesno unet WAL")
+	}
+
 	return inputKey, inputValue
 }
 
