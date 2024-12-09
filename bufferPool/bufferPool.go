@@ -44,21 +44,17 @@ func ceil(a, b int) int {
 	return (a + b - 1) / b
 }
 
-func flush(bufferPool *BufferPool) error {
-	filename := "data_file_" + strconv.Itoa(bufferPool.fileID) + ".bin"
-	file, err := os.Create(filename)
-	if err != nil {
-		return fmt.Errorf("failed to open file: %v", err)
+func flush(bufferPool *BufferPool, blockManager *BlockManager) error {
+	dataToWrite := bufferPool.buffer[bufferPool.start:bufferPool.end]
+	if len(dataToWrite) == 0 {
+		return nil
 	}
-	defer file.Close()
-	// Write the fileID as a 4-byte integer at the start
-	if err := binary.Write(file, binary.LittleEndian, int32(bufferPool.fileID)); err != nil {
-		return fmt.Errorf("failed to write fileID to file: %v", err)
+
+	offset := int64(bufferPool.fileID * FACTOR_MOVEMENT)
+	if err := blockManager.WriteBlock(offset, dataToWrite); err != nil {
+		return fmt.Errorf("failed to flush buffer to disk: %v", err)
 	}
-	// Write the buffer contents up to the current 'end' pointer to the file
-	if _, err := file.Write(bufferPool.buffer[:bufferPool.end]); err != nil {
-		return fmt.Errorf("failed to write buffer to file: %v", err)
-	}
+
 	// Reset the buffer and state after flushing
 	bufferPool.start = 2
 	bufferPool.end = FACTOR_MOVEMENT
@@ -66,7 +62,6 @@ func flush(bufferPool *BufferPool) error {
 	bufferPool.blockId = 0
 	bufferPool.pageId = 0
 	bufferPool.fileID++
-
 	return nil
 }
 
@@ -112,7 +107,14 @@ func inputLog(bufferPool *BufferPool, data []byte) error {
 		bufferPool.flush += FACTOR_MOVEMENT
 		bufferPool.start += BLOCK_SIZE_BYTES * available
 		if bufferPool.pageId >= FILE_SIZE {
-			flush(bufferPool)
+			filename := "data_file_" + strconv.Itoa(bufferPool.fileID) + ".bin"
+			blockManager, err := NewBlockManager(filename)
+			if err != nil {
+				return fmt.Errorf("failed to create block manager: %v", err)
+			}
+			if err := flush(bufferPool, blockManager); err != nil {
+				return fmt.Errorf("failed to flush buffer pool: %v", err)
+			}
 		}
 	}
 	if logSize == 0 {
@@ -142,7 +144,14 @@ func inputLog(bufferPool *BufferPool, data []byte) error {
 		bufferPool.end += FACTOR_MOVEMENT
 		bufferPool.flush += FACTOR_MOVEMENT
 		if bufferPool.pageId >= FILE_SIZE {
-			flush(bufferPool)
+			filename := "data_file_" + strconv.Itoa(bufferPool.fileID) + ".bin"
+			blockManager, err := NewBlockManager(filename)
+			if err != nil {
+				return fmt.Errorf("failed to create block manager: %v", err)
+			}
+			if err := flush(bufferPool, blockManager); err != nil {
+				return fmt.Errorf("failed to flush buffer pool: %v", err)
+			}
 		}
 	}
 	return nil
@@ -159,22 +168,21 @@ func readPageFromBufferPool(bufferPool *BufferPool, pageId int) ([]byte, error) 
 	}
 }
 
-func readPageFromDisk(pageId int, filename string) ([]byte, error) {
-	file, err := os.Open(filename)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open file: %v", err)
-	}
-	defer file.Close()
-
+func readPageToBufferPool(bufferPool *BufferPool, blockManager *BlockManager, pageId int) error {
 	pageSize := PAGE_SIZE * BLOCK_SIZE
 	offset := pageId * pageSize
-	pageData := make([]byte, pageSize)
-	_, err = file.ReadAt(pageData, int64(offset))
-	if err != nil {
-		return nil, fmt.Errorf("failed to read page from file: %v", err)
+	if bufferPool.end+pageSize > len(bufferPool.buffer) {
+		if err := flush(bufferPool, blockManager); err != nil {
+			return fmt.Errorf("failed to flush buffer pool: %v", err)
+		}
 	}
-
-	return pageData, nil
+	pageData, err := blockManager.ReadBlock(int64(offset), pageSize)
+	if err != nil {
+		return fmt.Errorf("failed to read page from disk: %v", err)
+	}
+	copy(bufferPool.buffer[bufferPool.end:], pageData)
+	bufferPool.end += pageSize
+	return nil
 }
 
 // Serialize method to save the BufferPool state and its buffer to a file
