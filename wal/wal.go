@@ -3,13 +3,13 @@ package wal
 import (
 	"encoding/binary"
 	"fmt"
+	"hash/crc32"
 	"os"
 	"strconv"
 	"time"
 )
 
 type LogEntry struct {
-	CRC       uint32
 	Timestamp time.Time
 	Tombstone bool
 	Key       string
@@ -18,13 +18,13 @@ type LogEntry struct {
 }
 
 type WAL struct {
-	walNames         []string
-	blockSize        int
-	segmentSize      int
-	currentWalName   string
-	currentBlock     int
-	freeBlock        int
-	minimumEntrySize int
+	walNames         []string // NAMES OF ALL WALx.LOG
+	blockSize        int      //
+	segmentSize      int      //
+	currentWalName   string   // THE LAST WAL, THE ONE THAT WE WRITE LOGS IN
+	currentBlock     int      // OFFSET WHERE WE WRITE
+	freeBlock        int      // HOW MUCH FREE SPACE WE GOT IN CURRENT BLOCK THAT WE WRITE IN
+	minimumEntrySize int      // HELPER ATTRIBUTE FOR PADDING
 }
 
 func NewWAL(blockSize int, segmentSize int, currentBlock int, freeBlock int) *WAL {
@@ -43,6 +43,9 @@ func NewWAL(blockSize int, segmentSize int, currentBlock int, freeBlock int) *WA
 		panic(err2)
 	}
 	file.Close()
+	offset := GettingWALSegmentOffset()
+	fmt.Println(offset)
+	// DODAJ DA SE PROCITANI OFFSET UBACUJE U WAL
 	wal.walNames = namesOfWals
 	wal.segmentSize = segmentSize
 	wal.blockSize = blockSize
@@ -53,23 +56,55 @@ func NewWAL(blockSize int, segmentSize int, currentBlock int, freeBlock int) *WA
 	return wal
 }
 
+func GettingWALSegmentOffset() uint32 {
+	// FUNCTION FOR GETTING OFFSET OF WAL
+	// WHEN FILLING MEMTABLE ON START OF PROGRAM
+	filePath := "wal/offset.bin"
+	file, err := os.OpenFile(filePath, os.O_RDONLY, 0666)
+	if err != nil {
+		if os.IsNotExist(err) {
+			file.Close()
+			offset := make([]byte, 4)
+			binary.LittleEndian.PutUint32(offset, uint32(0))
+			file.Write(offset)
+			err := os.WriteFile(filePath, offset, 0644)
+			if err != nil {
+				fmt.Println("Error creating file:", err)
+			}
+			return 0
+		} else {
+			panic(err)
+		}
+	} else {
+		offsetBytes := make([]byte, 4)
+		_, err := file.Read(offsetBytes)
+		if err != nil {
+			panic(err)
+		}
+		offset := uint32(binary.LittleEndian.Uint32(offsetBytes))
+		if err != nil {
+			fmt.Println("Error reading file:", err)
+			return 0
+		}
+		file.Close()
+		return offset
+	}
+}
+
 func NewLogEntry(key string, value string) *LogEntry {
 	logEntry := new(LogEntry)
 	logEntry.Key = key
 	logEntry.Value = value
 	logEntry.Tombstone = false
 	logEntry.Timestamp = time.Now()
-	logEntry.CRC = 0
 	logEntry.Type = "FULL"
 	return logEntry
 }
 
 func (log LogEntry) SerializeLogEntry() []byte {
 	bytes := make([]byte, 0)
-	CRCbytes := make([]byte, 4)
-	binary.LittleEndian.PutUint32(CRCbytes, uint32(log.CRC))
-	bytes = append(bytes, CRCbytes...)
 
+	// WHAT LOG IS IT: FULL, FIRST, MIDDLE, LAST
 	typeBytes := []byte(log.Type)
 	typeLen := len(typeBytes)
 	typeLenBytes := make([]byte, 8)
@@ -77,12 +112,15 @@ func (log LogEntry) SerializeLogEntry() []byte {
 	bytes = append(bytes, typeLenBytes...)
 	bytes = append(bytes, typeBytes...)
 
+	// WHEN THE LOG WAS CREATED
 	timestampBytes := make([]byte, 8)
 	binary.LittleEndian.PutUint64(timestampBytes, uint64(log.Timestamp.Unix()))
 	bytes = append(bytes, timestampBytes...)
 
+	// TOMBSTONE, FOR NOW ONLY 0
 	bytes = append(bytes, 0) // APPENDING FALSE FOR TOMBSTONE
 
+	// KEY LENGHT AND LENGHT ITSELF
 	keyBytes := []byte(log.Key)
 	keyLen := len(keyBytes)
 	keyLenBytes := make([]byte, 8)
@@ -90,6 +128,7 @@ func (log LogEntry) SerializeLogEntry() []byte {
 	bytes = append(bytes, keyLenBytes...)
 	bytes = append(bytes, keyBytes...)
 
+	// VALUE LENGHT AND VALUE ITSELF
 	valueBytes := []byte(log.Value)
 	valueLen := len(valueBytes)
 	valueLenBytes := make([]byte, 8)
@@ -97,17 +136,17 @@ func (log LogEntry) SerializeLogEntry() []byte {
 	bytes = append(bytes, valueLenBytes...)
 	bytes = append(bytes, valueBytes...)
 
+	// CONTROL HASH SUM
+	CRCbytes := make([]byte, 4)
+	CRC := crc32.ChecksumIEEE(bytes)
+	binary.LittleEndian.PutUint32(CRCbytes, uint32(CRC))
+	bytes = append(bytes, CRCbytes...)
+
 	return bytes
 }
 
 func (log *LogEntry) DeserializeLogEntry(file *os.File) error {
-	CRCbytes := make([]byte, 4)
-	_, err1 := file.Read(CRCbytes)
-	if err1 != nil {
-		panic(err1)
-	}
-	CRC := int32(binary.LittleEndian.Uint32(CRCbytes))
-
+	
 	typeLenBytes := make([]byte, 8)
 	_, err01 := file.Read(typeLenBytes)
 	if err01 != nil {
@@ -120,7 +159,7 @@ func (log *LogEntry) DeserializeLogEntry(file *os.File) error {
 	if err02 != nil {
 		panic(err02)
 	}
-
+	
 	timeStampBytes := make([]byte, 8)
 	_, err2 := file.Read(timeStampBytes)
 	if err2 != nil {
@@ -136,7 +175,7 @@ func (log *LogEntry) DeserializeLogEntry(file *os.File) error {
 	var tombstone bool
 	if tombstoneBytes[0] == 0 {
 		tombstone = false
-	} else {
+		} else {
 		tombstone = true
 	}
 
@@ -146,31 +185,39 @@ func (log *LogEntry) DeserializeLogEntry(file *os.File) error {
 		panic(err6)
 	}
 	keyLen := int64(binary.LittleEndian.Uint64(keyLenBytes))
-
+	
 	keyBytes := make([]byte, keyLen)
 	_, err7 := file.Read(keyBytes)
 	if err7 != nil {
 		panic(err7)
 	}
-
+	
 	valueLenBytes := make([]byte, 8)
 	_, err8 := file.Read(valueLenBytes)
 	if err8 != nil {
 		panic(err8)
 	}
 	valueLen := int64(binary.LittleEndian.Uint64(valueLenBytes))
-
+	
 	valueBytes := make([]byte, valueLen)
 	_, err9 := file.Read(valueBytes)
 	if err9 != nil {
 		panic(err9)
 	}
-
+	
 	key := string(keyBytes)
 	value := string(valueBytes)
 	typeB := string(typeBytes)
-
-	log.CRC = uint32(CRC)
+	
+	CRCbytes := make([]byte, 4)
+	_, err1 := file.Read(CRCbytes)
+	if err1 != nil {
+		panic(err1)
+	}
+	CRC := int32(binary.LittleEndian.Uint32(CRCbytes))
+	fmt.Println("CRC Ucitanog loga")
+	fmt.Println(CRC)
+	
 	log.Type = typeB
 	log.Timestamp = time.Unix(timestamp, 0)
 	log.Tombstone = tombstone

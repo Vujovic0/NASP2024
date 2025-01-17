@@ -3,14 +3,17 @@ package console
 import (
 	"NASP2024/wal"
 	"fmt"
+	"NASP2024/memtableStructures"
 )
 
 func Start() {
 	blockSize := 110 // SIZE OF WAL BLOCK IN BYTES
-	segmentSize := 1 // NUMBER OF BLOCKS IN SINGLE WAL FILE
+	segmentSize := 3 // NUMBER OF BLOCKS IN SINGLE WAL FILE
 	walFactory := wal.NewWAL(blockSize, segmentSize, 0, blockSize)
+	memtable := memtableStructures.InitializeMemoryTable()
+	fmt.Println(memtable.CurrentSize)
 	if walFactory == nil {
-		fmt.Println("WAL was not initialized successfully")
+	fmt.Println("WAL was not initialized successfully")
 	} else {
 		fmt.Println("WAL was inizialized successfully")
 	}
