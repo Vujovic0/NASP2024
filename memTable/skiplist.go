@@ -107,6 +107,28 @@ func (s *SkipList) search(key string) (*Element, bool) {
 	return nil, false
 }
 
+// func (s *SkipList) printAll() {
+// 	current := s.head.next[0] // Pocinjemo od najnizeg nivoa
+// 	for current != nil {
+// 		if !current.value.Tombstone { // Preskacemo logicki obrisane elemente
+// 			fmt.Printf("Key: %s, Value: %s, Timestamp: %d\n", current.value.Key, current.value.Value, current.value.Timestamp)
+// 		}
+// 		current = current.next[0]
+// 	}
+// }
+
+func (s *SkipList) getAllElements() []*Element {
+	var elements []*Element
+	current := s.head.next[0] // Pocinjemo od najnizeg nivoa
+	for current != nil {
+		if !current.value.Tombstone { // Preskacemo logicki obrisane elemente
+			elements = append(elements, current.value)
+		}
+		current = current.next[0]
+	}
+	return elements
+}
+
 func (sl *SkipList) update(element Element) {
 	existingElement, found := sl.search(element.Key)
 	if found {

@@ -340,19 +340,19 @@ func (treeNode *BTreeNode) splitChild(i int, splitingNode *BTreeNode) {
 	treeNode.n++
 }
 
-func (treeNode *BTreeNode) traverse() {
-	i := 0
-	for ; i < treeNode.n; i++ {
-		if !treeNode.isLeaf {
-			treeNode.children[i].traverse()
-		}
-		fmt.Println("Value of a node ", treeNode.keys[i])
-	}
+// func (treeNode *BTreeNode) traverse() {
+// 	i := 0
+// 	for ; i < treeNode.n; i++ {
+// 		if !treeNode.isLeaf {
+// 			treeNode.children[i].traverse()
+// 		}
+// 		fmt.Println("Value of a node ", treeNode.keys[i])
+// 	}
 
-	if !treeNode.isLeaf {
-		treeNode.children[i].traverse()
-	}
-}
+// 	if !treeNode.isLeaf {
+// 		treeNode.children[i].traverse()
+// 	}
+// }
 
 func (treeNode *BTreeNode) search(k string) (*Element, bool) {
 	i := 0
@@ -423,12 +423,12 @@ func (treeNode *BTreeNode) update(element Element) {
 	}
 }
 
-func (tree *BTree) traverse() {
-	// tree.root.traverse()
-	if tree.root != nil {
-		tree.root.traverse()
-	}
-}
+// func (tree *BTree) traverse() {
+// 	// tree.root.traverse()
+// 	if tree.root != nil {
+// 		tree.root.traverse()
+// 	}
+// }
 
 func (tree *BTree) search(k string) (*Element, bool) {
 	if tree.root == nil {
@@ -437,21 +437,21 @@ func (tree *BTree) search(k string) (*Element, bool) {
 	return tree.root.search(k)
 }
 
-func (tree *BTree) getAllElements() []Element {
-	var elements []Element
+func (tree *BTree) getAllElements() []*Element {
+	var elements []*Element
 	if tree.root != nil {
 		tree.root.collectElements(&elements)
 	}
 	return elements
 }
 
-func (treeNode *BTreeNode) collectElements(elements *[]Element) {
+func (treeNode *BTreeNode) collectElements(elements *[]*Element) {
 	i := 0
 	for ; i < treeNode.n; i++ {
 		if !treeNode.isLeaf {
 			treeNode.children[i].collectElements(elements)
 		}
-		*elements = append(*elements, treeNode.values[i])
+		*elements = append(*elements, &treeNode.values[i])
 	}
 
 	if !treeNode.isLeaf {

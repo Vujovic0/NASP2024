@@ -16,9 +16,9 @@ type Config struct {
 }
 
 type MemoryTable struct {
-	Data        interface{} // Moze biti SkipList ili BTree
+	Data        interface{} // Moze biti SkipList, BTree ili HashMap
 	MaxSize     uint64
-	Structure   string // Moze biti "btree" ili "skiplist"
+	Structure   string // Moze biti "btree","skiplist" ili "hashmap"
 	CurrentSize int
 }
 
@@ -48,6 +48,8 @@ func initializeMemoryTable() *MemoryTable {
 		memTable = initializeBTreeMemTable(&config)
 	case "skiplist":
 		memTable = initializeSkipListMemTable(&config)
+	case "hashmap":
+		memTable = initializeHashMapMemtable(&config)
 	default:
 		log.Fatal("Nepoznata struktura memtable: ", config.MemtableStructure)
 	}
@@ -90,6 +92,20 @@ func initializeBTreeMemTable(config *Config) *MemoryTable {
 	return memTable
 }
 
+func initializeHashMapMemtable(config *Config) *MemoryTable {
+	// Kreiranje HashMape
+	hashMap := newHashMap(16)
+	memTable := &MemoryTable{
+		Data:        hashMap,
+		MaxSize:     config.MemtableSize,
+		Structure:   config.MemtableStructure,
+		CurrentSize: 0,
+	}
+	fmt.Println("Memtable initialized with config: ", config)
+
+	return memTable
+}
+
 func (mt *MemoryTable) Insert(key string, value string) {
 	element := Element{
 		Key:       key,
@@ -113,6 +129,15 @@ func (mt *MemoryTable) Insert(key string, value string) {
 		if mt.CurrentSize >= int(mt.MaxSize) {
 			mt.Flush()
 		}
+	} else if mt.Structure == "hashmap" {
+		hashMap := mt.Data.(*HashMap)
+		hashMap.insert(element)
+
+		mt.CurrentSize += 1
+		if mt.CurrentSize >= int(mt.MaxSize) {
+			mt.Flush()
+		}
+
 	} else {
 		log.Fatal("Nepoznata struktura memtable")
 	}
@@ -140,6 +165,15 @@ func (mt *MemoryTable) Search(key string) (*Element, bool) {
 			return value, true
 		}
 
+	} else if mt.Structure == "hashmap" {
+		hashMap := mt.Data.(*HashMap)
+		value, found := hashMap.search(key)
+
+		if !found {
+			fmt.Println("Ne postoji element sa unetim kljucem!")
+		} else {
+			return value, true
+		}
 	} else {
 		log.Fatal("Nepoznata struktura memtable")
 	}
@@ -157,6 +191,9 @@ func (mt *MemoryTable) Delete(key string) {
 		tree := mt.Data.(*BTree)
 		tree.remove(key)
 
+	} else if mt.Structure == "hashmap" {
+		hashMap := mt.Data.(*HashMap)
+		hashMap.delete(key)
 	} else {
 		log.Fatal("Nepoznata struktura memtable")
 	}
@@ -177,29 +214,10 @@ func (mt *MemoryTable) Update(key string, value string) {
 	} else if mt.Structure == "btree" {
 		bTree := mt.Data.(*BTree)
 		bTree.update(element)
+	} else if mt.Structure == "hashMap" {
+		hashMap := mt.Data.(*HashMap)
+		hashMap.update(element)
 	}
-}
-
-// func (s *SkipList) printAll() {
-// 	current := s.head.next[0] // Pocinjemo od najnizeg nivoa
-// 	for current != nil {
-// 		if !current.value.Tombstone { // Preskacemo logicki obrisane elemente
-// 			fmt.Printf("Key: %s, Value: %s, Timestamp: %d\n", current.value.Key, current.value.Value, current.value.Timestamp)
-// 		}
-// 		current = current.next[0]
-// 	}
-// }
-
-func (s *SkipList) getAllElements() []*Element {
-	var elements []*Element
-	current := s.head.next[0] // Pocinjemo od najnizeg nivoa
-	for current != nil {
-		if !current.value.Tombstone { // Preskacemo logicki obrisane elemente
-			elements = append(elements, current.value)
-		}
-		current = current.next[0]
-	}
-	return elements
 }
 
 func (mt *MemoryTable) Flush() {
@@ -215,7 +233,14 @@ func (mt *MemoryTable) Flush() {
 		}
 	} else if mt.Structure == "btree" {
 		bTree := mt.Data.(*BTree)
-		elements = bTree.getAllElements()
+		for _, elem := range bTree.getAllElements() {
+			elements = append(elements, *elem)
+		}
+	} else if mt.Structure == "hashMap" {
+		hashMap := mt.Data.(*HashMap)
+		for _, elem := range hashMap.getAllElements() {
+			elements = append(elements, *elem)
+		}
 	}
 
 	// Sortiranje elemenata po kljucu
@@ -234,6 +259,8 @@ func (mt *MemoryTable) Flush() {
 		mt.Data = newSkipList(16) // Kreiramo novu praznu SkipList
 	} else if mt.Structure == "btree" {
 		mt.Data = newBTree(16) // Kreiramo novu praznu BTree strukturu
+	} else if mt.Structure == "hashMap" {
+		mt.Data = newHashMap(16) // Kreiramo novu praznu HashMap strukturu
 	}
 	mt.CurrentSize = 0
 
