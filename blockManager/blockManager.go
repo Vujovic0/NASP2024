@@ -13,6 +13,10 @@ func WriteData(filePath string, data []byte) <-chan *Block {
 	ch := make(chan *Block)
 
 	process := func() {
+		if len(data) < 37 {
+			panic("Invalid data")
+		}
+
 		file, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE, 0666)
 		if err != nil {
 			panic(err)
