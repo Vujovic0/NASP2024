@@ -19,12 +19,12 @@ func TestSingleEntryFitsInOneBlock(t *testing.T) {
 
 	var block *Block
 	for block = range WriteData(filePath, data) {
-		expectedCRC := crc32.ChecksumIEEE(append([]byte{0}, block.GetData()[4:]...))
+		expectedCRC := crc32.ChecksumIEEE(block.GetData()[4:])
 		if binary.BigEndian.Uint32(block.GetData()[0:4]) != expectedCRC {
 			t.Errorf("CRC mismatch")
 		}
 
-		blockData := block.GetData()[5 : 5+len(data)]
+		blockData := block.GetData()[9 : 9+len(data)]
 		if !bytes.Equal(blockData, data) {
 			t.Errorf("Data mismatch")
 		}
@@ -45,7 +45,7 @@ func TestMultipleEntriesFitInOneBlock(t *testing.T) {
 	ch := WriteData(filePath, data)
 	block := <-ch
 
-	expectedData := block.GetData()[5 : 5+len(data)]
+	expectedData := block.GetData()[9 : 9+len(data)]
 	if !bytes.Equal(expectedData, data) {
 		t.Errorf("Data mismatch")
 	}
@@ -64,12 +64,12 @@ func TestEntrySpansMultipleBlocks(t *testing.T) {
 
 	var reconstructed []byte
 	for block := range ch {
-		start := 5
+		start := 9
 		end := start + len(data) - len(reconstructed)
 		if end > blockSize {
 			end = blockSize
 		}
-		reconstructed = append(reconstructed, block.GetData()[5:end]...)
+		reconstructed = append(reconstructed, block.GetData()[9:end]...)
 	}
 
 	if !bytes.Equal(reconstructed, data) {
@@ -83,14 +83,14 @@ func TestBoundaryConditions(t *testing.T) {
 	defer os.Remove(filePath)
 
 	key := []byte("k")
-	valueSize := blockSize - 5 - 37 - len(key) // Adjust to fill exactly
+	valueSize := blockSize - 9 - 37 - len(key) // Adjust to fill exactly
 	value := make([]byte, valueSize)
 	data := createEntry(key, value)
 
 	ch := WriteData(filePath, data)
 	block := <-ch
 
-	if !bytes.Equal(block.GetData()[5:5+len(data)], data) {
+	if !bytes.Equal(block.GetData()[9:9+len(data)], data) {
 		t.Errorf("Data mismatch")
 	}
 }

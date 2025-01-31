@@ -37,35 +37,50 @@ func InitNode(b *Block) *Node {
 	}
 }
 
-//PriorityList class.
-type priorityList struct {
-	head   *Node
-	tail   *Node
-	length int
-	size   int
+func InitNodeEmpty() *Node {
+	return &Node{
+		previous: nil,
+		next:     nil,
+		block:    nil,
+	}
 }
 
-func (pl *priorityList) AddFirst(b *Block) {
-	newNode := InitNode(b)
+//PriorityList class.
+//Has pointer to first and last node that don't have values.
+//Has max length and current size.
+type priorityList struct {
+	head *Node
+	tail *Node
+}
+
+func initPriorityList() *priorityList {
+	pl := &priorityList{
+		head: InitNodeEmpty(),
+		tail: InitNodeEmpty(),
+	}
+
+	pl.head.previous = pl.tail
+	pl.tail.next = pl.head
+	return pl
+}
+
+func (pl *priorityList) AddFirst(newNode *Node) {
 	newNode.SetNext(pl.head)
 	newNode.SetPrevious(pl.head.GetPrevious())
 
 	pl.head.SetPrevious(newNode)
-
-	pl.size += 1
-	if pl.size > pl.length {
-		pl.RemoveLast()
-	}
 }
 
-func (pl *priorityList) RemoveLast() {
+func (pl *priorityList) RemoveLast() *Node {
 	lastNode := pl.tail.GetNext()
+
 	pl.tail.SetNext(lastNode.GetNext())
 	lastNode.GetNext().SetPrevious(pl.tail)
-	pl.size -= 1
+
+	return lastNode
 }
 
-//Moves a node up to head if successful search
+//Moves a node up to head
 func (pl *priorityList) moveUp(node *Node) {
 	node.GetPrevious().SetNext(node.GetNext())
 	node.GetNext().SetPrevious(node.GetPrevious())
