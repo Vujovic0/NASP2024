@@ -7,6 +7,7 @@ type Node struct {
 	previous *Node
 	next     *Node
 	block    *Block
+	key      key
 }
 
 func (n *Node) SetPrevious(newNode *Node) {
@@ -34,6 +35,7 @@ func InitNode(b *Block) *Node {
 		previous: nil,
 		next:     nil,
 		block:    b,
+		key:      initKey(b.GetFilePath(), b.GetOffset()),
 	}
 }
 
@@ -43,6 +45,10 @@ func InitNodeEmpty() *Node {
 		next:     nil,
 		block:    nil,
 	}
+}
+
+func (n *Node) GetKey() key {
+	return n.key
 }
 
 //PriorityList class.

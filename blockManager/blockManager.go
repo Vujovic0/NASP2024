@@ -42,14 +42,12 @@ func WriteData(filePath string, data []byte, blockCache *blockCache) <-chan *Blo
 		var entrySizeLeft uint64 = 0
 		var block *Block
 		var newEntryCheck bool = true
-		var keyCrc uint32
 
 		for dataPointer < uint64(len(data)) {
 
 			if newEntryCheck {
 				entryKeySize = binary.BigEndian.Uint64(data[dataPointer+21 : dataPointer+29])
 				entryValueSize = binary.BigEndian.Uint64(data[dataPointer+29 : dataPointer+37])
-				keyCrc = crc32.ChecksumIEEE(data[dataPointer : dataPointer+entryKeySize])
 				entrySize = entryKeySize + entryValueSize + 37
 				entrySizeLeft = entrySize
 			}
@@ -68,7 +66,7 @@ func WriteData(filePath string, data []byte, blockCache *blockCache) <-chan *Blo
 					binary.BigEndian.PutUint32(blockData[0:4], crcValue)
 
 					block = InitBlock(filePath, blockOffset, blockType, int(blockPointer-9), blockData)
-					blockCache.addBlock(int(keyCrc), block)
+					blockCache.addBlock(block)
 					file.Write(block.GetData())
 					ch <- block
 					break
@@ -121,7 +119,7 @@ func WriteData(filePath string, data []byte, blockCache *blockCache) <-chan *Blo
 			blockData = make([]byte, blockSize)
 			blockPointer = 9
 			blockOffset += 1
-			blockCache.addBlock(int(keyCrc), block)
+			blockCache.addBlock(block)
 			file.Write(block.GetData())
 			ch <- block
 		}
@@ -135,29 +133,39 @@ func WriteData(filePath string, data []byte, blockCache *blockCache) <-chan *Blo
 	return ch
 }
 
-func WriteBlock(block *Block) {
+func WriteBlock(block *Block, blockCache *blockCache) {
 	file, err := os.OpenFile(block.GetFilePath(), os.O_RDWR|os.O_CREATE, 0666)
 	if err != nil {
 		panic(err)
 	}
 	defer file.Close()
 
+	_, ok := blockCache.findBlock(block.GetFilePath(), block.GetOffset())
+	if !ok {
+		blockCache.addBlock(block)
+	}
+
 	file.Seek(int64(block.GetOffset()*blockSize), 0)
 	file.Write(block.GetData())
 }
 
-func ReadBlock(filePath string, offset int) *Block {
+func ReadBlock(filePath string, offset int, blockCache *blockCache) *Block {
 	file, err := os.OpenFile(filePath, os.O_RDONLY, 0666)
 	if err != nil {
 		panic(err)
 	}
 	defer file.Close()
 
+	block, ok := blockCache.findBlock(filePath, offset)
+	if ok {
+		return block
+	}
+
 	file.Seek(int64(offset)*int64(blockSize), 0)
 	blockData := make([]byte, blockSize)
 	file.Read(blockData)
 	dataSize := binary.BigEndian.Uint32(blockData[5:9])
-	block := InitBlock(filePath, offset, blockData[4], int(dataSize), blockData)
+	block = InitBlock(filePath, offset, blockData[4], int(dataSize), blockData)
 	return block
 }
 

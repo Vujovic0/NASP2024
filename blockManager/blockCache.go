@@ -1,8 +1,20 @@
 package blockManager
 
+type key struct {
+	filePath string
+	offset   int
+}
+
+func initKey(filePath string, offset int) key {
+	return key{
+		filePath: filePath,
+		offset:   offset,
+	}
+}
+
 type blockCache struct {
 	pl      *priorityList
-	nodeMap map[int][]*Node
+	nodeMap map[key]*Node
 	LENGTH  int
 	size    int
 }
@@ -10,30 +22,33 @@ type blockCache struct {
 func InitBlockCache(maxLength int) *blockCache {
 	return &blockCache{
 		pl:      initPriorityList(),
-		nodeMap: make(map[int][]*Node),
+		nodeMap: make(map[key]*Node),
 		LENGTH:  maxLength,
 		size:    0,
 	}
 }
 
-func (bc *blockCache) addBlock(keyCrc int, block *Block) {
+// Adds block, assuming that the block isn't already in cache
+func (bc *blockCache) addBlock(block *Block) {
 	node := InitNode(block)
+	key := initKey(block.GetFilePath(), block.GetOffset())
+	bc.nodeMap[key] = node
 	bc.pl.AddFirst(node)
 	bc.size += 1
-	_, ok := bc.nodeMap[keyCrc]
-	if !ok {
-		bc.nodeMap[keyCrc] = make([]*Node, 0)
-	}
-	bc.nodeMap[keyCrc] = append(bc.nodeMap[keyCrc], node)
 
 	if bc.size > bc.LENGTH {
 		bc.size -= 1
 		lastNode := bc.pl.RemoveLast()
-		for key, nodeList := range bc.nodeMap {
-			if nodeList[0] == lastNode {
-				bc.nodeMap[key] = nodeList[1:]
-			}
-		}
+		delete(bc.nodeMap, lastNode.GetKey())
 	}
 
+}
+
+func (bc *blockCache) findBlock(filePath string, offset int) (*Block, bool) {
+	node, ok := bc.nodeMap[initKey(filePath, offset)]
+	if ok {
+		bc.pl.moveUp(node)
+		return node.GetBlock(), true
+	}
+	return nil, false
 }
