@@ -2,6 +2,7 @@ package blockManager
 
 import (
 	"encoding/binary"
+	"fmt"
 	"hash/crc32"
 	"os"
 )
@@ -12,10 +13,12 @@ const (
 	HEADER_SIZE       = 46
 )
 
+var bc *blockCache = InitBlockCache(50)
+
 var blockSize = 1024 * 4
 
-// Writes data serialized using big endian. Can work as a generator function when used along keyword "range".
-func WriteData(filePath string, data []byte, blockCache *blockCache) <-chan *Block {
+// Writes data serialized using big endian. Can work as a generator function when used with keyword "range".
+func WriteData(filePath string, data []byte) <-chan *Block {
 	ch := make(chan *Block)
 
 	process := func() {
@@ -66,8 +69,7 @@ func WriteData(filePath string, data []byte, blockCache *blockCache) <-chan *Blo
 					binary.BigEndian.PutUint32(blockData[0:4], crcValue)
 
 					block = InitBlock(filePath, blockOffset, blockType, int(blockPointer-9), blockData)
-					blockCache.addBlock(block)
-					file.Write(block.GetData())
+					WriteBlock(file, block)
 					ch <- block
 					break
 				}
@@ -119,8 +121,7 @@ func WriteData(filePath string, data []byte, blockCache *blockCache) <-chan *Blo
 			blockData = make([]byte, blockSize)
 			blockPointer = 9
 			blockOffset += 1
-			blockCache.addBlock(block)
-			file.Write(block.GetData())
+			WriteBlock(file, block)
 			ch <- block
 		}
 	}
@@ -133,30 +134,19 @@ func WriteData(filePath string, data []byte, blockCache *blockCache) <-chan *Blo
 	return ch
 }
 
-func WriteBlock(block *Block, blockCache *blockCache) {
-	file, err := os.OpenFile(block.GetFilePath(), os.O_RDWR|os.O_CREATE, 0666)
-	if err != nil {
-		panic(err)
-	}
-	defer file.Close()
-
-	_, ok := blockCache.findBlock(block.GetFilePath(), block.GetOffset())
+func WriteBlock(file *os.File, block *Block) {
+	_, ok := bc.findBlock(block.GetFilePath(), block.GetOffset())
 	if !ok {
-		blockCache.addBlock(block)
+		bc.addBlock(block)
 	}
 
 	file.Seek(int64(block.GetOffset()*blockSize), 0)
 	file.Write(block.GetData())
 }
 
-func ReadBlock(filePath string, offset int, blockCache *blockCache) *Block {
-	file, err := os.OpenFile(filePath, os.O_RDONLY, 0666)
-	if err != nil {
-		panic(err)
-	}
-	defer file.Close()
+func ReadBlock(file *os.File, offset int) *Block {
 
-	block, ok := blockCache.findBlock(filePath, offset)
+	block, ok := bc.findBlock(file.Name(), offset)
 	if ok {
 		return block
 	}
@@ -165,12 +155,13 @@ func ReadBlock(filePath string, offset int, blockCache *blockCache) *Block {
 	blockData := make([]byte, blockSize)
 	file.Read(blockData)
 	dataSize := binary.BigEndian.Uint32(blockData[5:9])
-	block = InitBlock(filePath, offset, blockData[4], int(dataSize), blockData)
+	block = InitBlock(file.Name(), offset, blockData[4], int(dataSize), blockData)
 	return block
 }
 
 // Returns a list of keys inside a block or multiple blocks that are written on disk
-func GetKeys(block *Block) []string {
+// !!!Doesn't work if blocks aren't written on disk!!!
+func GetKeys(block *Block) ([]string, error) {
 	keys := make([]string, 0)
 	blockPointer := 9 + 21
 	var keySize uint64 = 0
@@ -187,16 +178,22 @@ func GetKeys(block *Block) []string {
 		keyBytes := make([]byte, 0)
 		keySize = uint64(binary.BigEndian.Uint64(block.GetData()[blockPointer : blockPointer+8]))
 		blockPointer += 16
+
+		file, err := os.OpenFile(block.GetFilePath(), os.O_RDONLY, 0644)
+		if err != nil {
+			return nil, fmt.Errorf("Failed to open file: " + block.GetFilePath())
+		}
+
 		for keySize > 0 {
 			keyBytes = append(keyBytes, block.GetData()[blockPointer:min(keySize, uint64(blockSize))]...)
 			keySize -= uint64(blockSize)
 			blockPointer = 9
-			block = ReadBlock(block.GetFilePath(), block.GetOffset()+1)
+			block = ReadBlock(file, block.GetOffset()+1)
 		}
 		keys = append(keys, string(keyBytes))
 	} else {
 		panic("This isn't the first block of data!")
 	}
 
-	return keys
+	return keys, nil
 }
