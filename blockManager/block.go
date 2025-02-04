@@ -1,7 +1,7 @@
 package blockManager
 
 type Block struct {
-	filepath  string
+	filePath  string
 	offset    int
 	blockType byte
 	blockSize int
@@ -10,7 +10,7 @@ type Block struct {
 
 func InitBlock(filepath string, offset int, blockType byte, blockSize int, data []byte) *Block {
 	return &Block{
-		filepath:  filepath,
+		filePath:  filepath,
 		offset:    offset,
 		blockType: blockType,
 		blockSize: blockSize,
@@ -23,7 +23,7 @@ func (b *Block) GetData() []byte {
 }
 
 func (b *Block) GetFilePath() string {
-	return b.filepath
+	return b.filePath
 }
 
 func (b *Block) GetOffset() int {

@@ -13,7 +13,7 @@ const (
 	HEADER_SIZE       = 46
 )
 
-var bc *blockCache = InitBlockCache(50)
+var bc *blockCache[*Block] = InitBlockCache[*Block](50)
 
 var blockSize = 1024 * 4
 

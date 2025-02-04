@@ -3,97 +3,96 @@ package blockManager
 //Node class used in priorityList class.
 //Has pointer to next and previous node.
 //It keeps pointer to block as value
-type Node struct {
-	previous *Node
-	next     *Node
-	block    *Block
-	key      key
+type Node[T any] struct {
+	previous *Node[T]
+	next     *Node[T]
+	data     T
 }
 
-func (n *Node) SetPrevious(newNode *Node) {
+func (n *Node[T]) SetPrevious(newNode *Node[T]) {
 	n.previous = newNode
 }
 
-func (n *Node) GetPrevious() *Node {
+func (n *Node[T]) GetPrevious() *Node[T] {
 	return n.previous
 }
 
-func (n *Node) SetNext(newNode *Node) {
+func (n *Node[T]) SetNext(newNode *Node[T]) {
 	n.next = newNode
 }
 
-func (n *Node) GetNext() *Node {
+func (n *Node[T]) GetNext() *Node[T] {
 	return n.next
 }
 
-func (n *Node) GetBlock() *Block {
-	return n.block
+func (n *Node[T]) GetData() T {
+	return n.data
 }
 
-func InitNode(b *Block) *Node {
-	return &Node{
+func InitNode[T any](data T) *Node[T] {
+	return &Node[T]{
 		previous: nil,
 		next:     nil,
-		block:    b,
-		key:      initKey(b.GetFilePath(), b.GetOffset()),
+		data:     data,
 	}
 }
 
-func InitNodeEmpty() *Node {
-	return &Node{
+func InitNodeEmpty[T any]() *Node[T] {
+	return &Node[T]{
 		previous: nil,
 		next:     nil,
-		block:    nil,
 	}
-}
-
-func (n *Node) GetKey() key {
-	return n.key
 }
 
 //PriorityList class.
 //Has pointer to first and last node that don't have values.
 //Has max length and current size.
-type priorityList struct {
-	head *Node
-	tail *Node
+type priorityList[T any] struct {
+	tail *Node[T]
+	head *Node[T]
 }
 
-func initPriorityList() *priorityList {
-	pl := &priorityList{
-		head: InitNodeEmpty(),
-		tail: InitNodeEmpty(),
+func initPriorityList[T any]() *priorityList[T] {
+	pl := &priorityList[T]{
+		tail: InitNodeEmpty[T](),
+		head: InitNodeEmpty[T](),
 	}
 
-	pl.head.previous = pl.tail
-	pl.tail.next = pl.head
+	pl.tail.previous = pl.head
+	pl.head.next = pl.tail
 	return pl
 }
 
-func (pl *priorityList) AddFirst(newNode *Node) {
-	newNode.SetNext(pl.head)
-	newNode.SetPrevious(pl.head.GetPrevious())
+func (pl *priorityList[T]) AddFirst(newNode *Node[T]) {
+	newNode.SetNext(pl.tail)
+	newNode.SetPrevious(pl.tail.GetPrevious())
 
-	pl.head.SetPrevious(newNode)
+	pl.tail.GetPrevious().SetNext(newNode)
+	pl.tail.SetPrevious(newNode)
 }
 
-func (pl *priorityList) RemoveLast() *Node {
-	lastNode := pl.tail.GetNext()
+func (pl *priorityList[T]) RemoveLast() *Node[T] {
+	lastNode := pl.head.GetNext()
 
-	pl.tail.SetNext(lastNode.GetNext())
-	lastNode.GetNext().SetPrevious(pl.tail)
+	pl.head.SetNext(lastNode.GetNext())
+	lastNode.GetNext().SetPrevious(pl.head)
 
 	return lastNode
 }
 
+func (pl *priorityList[T]) Remove(node *Node[T]) {
+	node.GetPrevious().SetNext(node.GetNext())
+	node.GetNext().SetPrevious(node.GetPrevious())
+}
+
 //Moves a node up to head
-func (pl *priorityList) moveUp(node *Node) {
+func (pl *priorityList[T]) moveUp(node *Node[T]) {
 	node.GetPrevious().SetNext(node.GetNext())
 	node.GetNext().SetPrevious(node.GetPrevious())
 
-	node.SetNext(pl.head)
-	node.SetPrevious(pl.head.GetPrevious())
+	node.SetNext(pl.tail)
+	node.SetPrevious(pl.tail.GetPrevious())
 
 	node.GetPrevious().SetNext(node)
-	pl.head.SetPrevious(node)
+	pl.tail.SetPrevious(node)
 }
