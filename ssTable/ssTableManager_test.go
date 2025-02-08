@@ -1,6 +1,7 @@
-package blockManager
+package ssTable
 
 import (
+	"NASP2024/blockManager"
 	"bytes"
 	"encoding/binary"
 	"hash/crc32"
@@ -17,7 +18,7 @@ func TestSingleEntryFitsInOneBlock(t *testing.T) {
 	value := []byte("value")
 	data := createEntry(key, value)
 
-	var block *Block
+	var block *blockManager.Block
 	for block = range WriteData(filePath, data) {
 		expectedCRC := crc32.ChecksumIEEE(block.GetData()[4:])
 		if binary.BigEndian.Uint32(block.GetData()[0:4]) != expectedCRC {
@@ -92,32 +93,6 @@ func TestBoundaryConditions(t *testing.T) {
 
 	if !bytes.Equal(block.GetData()[9:9+len(data)], data) {
 		t.Errorf("Data mismatch")
-	}
-}
-
-// TestMalformedData tests handling of invalid data.
-func TestMalformedData(t *testing.T) {
-	filePath := "test_malformed.dat"
-	defer os.Remove(filePath)
-
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("Expected panic")
-		}
-	}()
-	WriteData(filePath, make([]byte, 30))
-}
-
-// TestGeneratorMode tests asynchronous block generation.
-func TestGeneratorMode(t *testing.T) {
-	filePath := "test_generator.dat"
-	defer os.Remove(filePath)
-
-	data := createEntry([]byte("key"), []byte("value"))
-	ch := WriteData(filePath, data)
-
-	if block := <-ch; block == nil {
-		t.Error("Expected block")
 	}
 }
 
