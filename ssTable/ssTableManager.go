@@ -2,6 +2,7 @@ package ssTable
 
 import (
 	"NASP2024/blockManager"
+	"bytes"
 	"encoding/binary"
 	"hash/crc32"
 	"os"
@@ -9,25 +10,26 @@ import (
 
 var blockSize = 1024 * 4
 
+type channelResult struct {
+	Block *blockManager.Block
+	Key   []byte
+}
+
 // Writes data serialized using big endian. Can work as a generator function when used with keyword "range".
-func WriteData(filePath string, data []byte) <-chan *blockManager.Block {
-	ch := make(chan *blockManager.Block)
+// Takes a byte array formed by entries with certain formatting
+// | KEYOFFSET | Keysize 8B | Valuesize 8B | Key... | Value... |
+func PrepareBlocks(filePath string, data []byte, keySizeOffset int) <-chan *channelResult {
+	ch := make(chan *channelResult)
 
 	process := func() {
-		if len(data) < 37 {
+		if len(data) < keySizeOffset+16 {
 			panic("Invalid data")
 		}
-
-		file, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE, 0666)
-		if err != nil {
-			panic(err)
-		}
-		defer file.Close()
 
 		var dataPointer uint64 = 0
 		blockPointer := 9
 		blockData := make([]byte, blockSize)
-		blockOffset := 0
+		blockOffset := uint64(0)
 		var crcValue uint32 = 0
 		var blockType byte = 0
 
@@ -37,14 +39,20 @@ func WriteData(filePath string, data []byte) <-chan *blockManager.Block {
 		var entrySizeLeft uint64 = 0
 		var block *blockManager.Block
 		var newEntryCheck bool = true
+		var newBlockCheck bool = true
+		var key []byte
 
 		for dataPointer < uint64(len(data)) {
 
 			if newEntryCheck {
-				entryKeySize = binary.BigEndian.Uint64(data[dataPointer+21 : dataPointer+29])
-				entryValueSize = binary.BigEndian.Uint64(data[dataPointer+29 : dataPointer+37])
-				entrySize = entryKeySize + entryValueSize + 37
+				entryKeySize = binary.BigEndian.Uint64(data[dataPointer+uint64(keySizeOffset) : dataPointer+uint64(keySizeOffset)+8])
+				entryValueSize = binary.BigEndian.Uint64(data[dataPointer+uint64(keySizeOffset)+8 : dataPointer+uint64(keySizeOffset)+16])
+				entrySize = entryKeySize + entryValueSize + uint64(keySizeOffset) + 16
 				entrySizeLeft = entrySize
+				if newBlockCheck {
+					key = data[dataPointer+uint64(keySizeOffset)+16 : dataPointer+uint64(keySizeOffset)+16+entryKeySize]
+					newBlockCheck = false
+				}
 			}
 
 			if uint64(blockSize-blockPointer) >= entrySize {
@@ -61,8 +69,7 @@ func WriteData(filePath string, data []byte) <-chan *blockManager.Block {
 					binary.BigEndian.PutUint32(blockData[0:4], crcValue)
 
 					block = blockManager.InitBlock(filePath, blockOffset, blockType, int(blockPointer-9), blockData)
-					blockManager.WriteBlock(file, block)
-					ch <- block
+					ch <- &channelResult{Block: block, Key: key}
 					break
 				}
 				continue
@@ -113,8 +120,8 @@ func WriteData(filePath string, data []byte) <-chan *blockManager.Block {
 			blockData = make([]byte, blockSize)
 			blockPointer = 9
 			blockOffset += 1
-			blockManager.WriteBlock(file, block)
-			ch <- block
+			ch <- &channelResult{Block: block, Key: key}
+			newBlockCheck = true
 		}
 	}
 
@@ -124,4 +131,58 @@ func WriteData(filePath string, data []byte) <-chan *blockManager.Block {
 	}()
 
 	return ch
+}
+
+// TODO: Figure out how to make a file that is a generation bigger than the last one
+func CreateSSTable(filePath string, data []byte, lastElementData []byte, summary_sparsity int, index_sparsity int) {
+	file, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE, 0664)
+	if err != nil {
+		panic(err)
+	}
+	defer file.Close()
+
+	var indexData []byte
+	var summaryData []byte
+	summaryData = append(summaryData, lastElementData...)
+
+	var keyBinary []byte
+	valueBinary := make([]byte, 8)
+	valueSizeBinary := []byte{0, 0, 0, 0, 0, 0, 0, 8}
+	keySizeBinary := make([]byte, 8)
+	var counter int = 0
+
+	for channelResult := range PrepareBlocks(filePath, data, 21) {
+		blockManager.WriteBlock(file, channelResult.Block)
+		if !bytes.Equal(keyBinary, channelResult.Key) {
+			if counter%index_sparsity == 0 {
+				keyBinary = channelResult.Key
+				binary.BigEndian.PutUint64(keySizeBinary, uint64(len(keyBinary)))
+				binary.BigEndian.PutUint64(valueBinary, uint64(channelResult.Block.GetOffset()))
+				indexData = append(indexData, keySizeBinary...)
+				indexData = append(indexData, valueSizeBinary...)
+				indexData = append(indexData, keyBinary...)
+				indexData = append(indexData, valueBinary...)
+			}
+			counter += 1
+		}
+	}
+
+	keyBinary = nil
+	counter = 0
+
+	for channelResult := range PrepareBlocks(filePath, indexData, 0) {
+		blockManager.WriteBlock(file, channelResult.Block)
+		if !bytes.Equal(keyBinary, channelResult.Key) {
+			if counter%summary_sparsity == 0 {
+				keyBinary = channelResult.Key
+				binary.BigEndian.PutUint64(keySizeBinary, uint64(len(keyBinary)))
+				binary.BigEndian.PutUint64(valueBinary, uint64(channelResult.Block.GetOffset()))
+				summaryData = append(summaryData, keySizeBinary...)
+				summaryData = append(summaryData, valueSizeBinary...)
+				summaryData = append(summaryData, keyBinary...)
+				summaryData = append(summaryData, valueBinary...)
+			}
+			counter += 1
+		}
+	}
 }

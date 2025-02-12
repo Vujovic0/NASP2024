@@ -2,13 +2,13 @@ package blockManager
 
 type Block struct {
 	filePath  string
-	offset    int
+	offset    uint64
 	blockType byte
 	blockSize int
 	data      []byte
 }
 
-func InitBlock(filepath string, offset int, blockType byte, blockSize int, data []byte) *Block {
+func InitBlock(filepath string, offset uint64, blockType byte, blockSize int, data []byte) *Block {
 	return &Block{
 		filePath:  filepath,
 		offset:    offset,
@@ -26,7 +26,7 @@ func (b *Block) GetFilePath() string {
 	return b.filePath
 }
 
-func (b *Block) GetOffset() int {
+func (b *Block) GetOffset() uint64 {
 	return b.offset
 }
 
