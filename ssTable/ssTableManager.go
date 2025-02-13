@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"hash/crc32"
 	"os"
+	"strconv"
 )
 
 var blockSize = 1024 * 4
@@ -134,12 +135,31 @@ func PrepareBlocks(filePath string, data []byte, keySizeOffset int) <-chan *chan
 }
 
 // TODO: Figure out how to make a file that is a generation bigger than the last one
-func CreateSSTable(filePath string, data []byte, lastElementData []byte, summary_sparsity int, index_sparsity int) {
-	file, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE, 0664)
+func CreateSSTable(data []byte, lastElementData []byte, summary_sparsity int, index_sparsity int) {
+	generation := getGeneration()
+
+	fileName := "usertable-" + strconv.FormatUint(uint64(generation), 10)
+	FILEDATAPATH := fileName + "-data.bin"
+	FILEINDEXPATH := fileName + "-index.bin"
+	FILESUMMARYPATH := fileName + "-summary.bin"
+
+	fileData, err := os.OpenFile(FILEDATAPATH, os.O_CREATE, 0664)
 	if err != nil {
 		panic(err)
 	}
-	defer file.Close()
+	defer fileData.Close()
+
+	fileIndex, err := os.OpenFile(FILEINDEXPATH, os.O_CREATE, 0664)
+	if err != nil {
+		panic(err)
+	}
+	defer fileIndex.Close()
+
+	fileSummary, err := os.OpenFile(FILESUMMARYPATH, os.O_CREATE, 0664)
+	if err != nil {
+		panic(err)
+	}
+	defer fileSummary.Close()
 
 	var indexData []byte
 	var summaryData []byte
@@ -151,8 +171,9 @@ func CreateSSTable(filePath string, data []byte, lastElementData []byte, summary
 	keySizeBinary := make([]byte, 8)
 	var counter int = 0
 
-	for channelResult := range PrepareBlocks(filePath, data, 21) {
-		blockManager.WriteBlock(file, channelResult.Block)
+	//Creates the data segment while preparing data for the index segment
+	for channelResult := range PrepareBlocks(FILEDATAPATH, data, 21) {
+		blockManager.WriteBlock(fileData, channelResult.Block)
 		if !bytes.Equal(keyBinary, channelResult.Key) {
 			if counter%index_sparsity == 0 {
 				keyBinary = channelResult.Key
@@ -170,8 +191,9 @@ func CreateSSTable(filePath string, data []byte, lastElementData []byte, summary
 	keyBinary = nil
 	counter = 0
 
-	for channelResult := range PrepareBlocks(filePath, indexData, 0) {
-		blockManager.WriteBlock(file, channelResult.Block)
+	//Creates the index segment while preparing data for the summary segment
+	for channelResult := range PrepareBlocks(FILEINDEXPATH, indexData, 0) {
+		blockManager.WriteBlock(fileIndex, channelResult.Block)
 		if !bytes.Equal(keyBinary, channelResult.Key) {
 			if counter%summary_sparsity == 0 {
 				keyBinary = channelResult.Key
@@ -185,4 +207,39 @@ func CreateSSTable(filePath string, data []byte, lastElementData []byte, summary
 			counter += 1
 		}
 	}
+
+	//Creates summary segment
+	for channelResult := range PrepareBlocks(FILESUMMARYPATH, summaryData, 0) {
+		blockManager.WriteBlock(fileSummary, channelResult.Block)
+	}
+}
+
+func getGeneration() uint64 {
+	var generation uint64
+
+	_, err := os.Stat("metaData.bin")
+	fileExists := err == nil || !os.IsNotExist(err)
+
+	metaFile, err := os.OpenFile("metaData.bin", os.O_RDWR|os.O_CREATE, 0664)
+	if err != nil {
+		panic(err)
+	}
+	defer metaFile.Close()
+	var block *blockManager.Block
+	if fileExists {
+		block = blockManager.ReadBlock(metaFile, 0)
+		generation = binary.BigEndian.Uint64(block.GetData()[0:8])
+		generation += 1
+		dataPlaceholder := make([]byte, blockSize)
+		binary.BigEndian.PutUint64(dataPlaceholder[:8], generation)
+		block = blockManager.InitBlock("metaData.bin", 0, 0, 8, dataPlaceholder)
+	} else {
+		dataPlaceholder := make([]byte, blockSize)
+		dataPlaceholder[7] = 1
+		block = blockManager.InitBlock("metaData.bin", 0, 0, 8, dataPlaceholder)
+		generation = 1
+	}
+	blockManager.WriteBlock(metaFile, block)
+
+	return generation
 }

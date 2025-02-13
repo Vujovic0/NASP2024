@@ -22,11 +22,11 @@ func WriteBlock(file *os.File, block *Block) {
 		bc.addBlock(block)
 	}
 
-	file.Seek(int64(block.GetOffset()*blockSize), 0)
+	file.Seek(int64(block.GetOffset()*uint64(blockSize)), 0)
 	file.Write(block.GetData())
 }
 
-func ReadBlock(file *os.File, offset int) *Block {
+func ReadBlock(file *os.File, offset uint64) *Block {
 
 	block, ok := bc.findBlock(file.Name(), offset)
 	if ok {
