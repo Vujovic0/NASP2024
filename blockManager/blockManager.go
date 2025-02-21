@@ -42,5 +42,6 @@ func ReadBlock(file *os.File, offset uint64) *Block {
 		panic("Error reading file: " + file.Name())
 	}
 	block = InitBlock(file.Name(), offset, blockData)
+	bc.addBlock(block)
 	return block
 }

@@ -236,10 +236,10 @@ func CreateSeparatedSSTable(data []byte, lastElementData []byte, summary_sparsit
 func getGeneration() uint64 {
 	var generation uint64
 
-	_, err := os.Stat("metaData.bin")
+	_, err := os.Stat("data" + string(os.PathSeparator) + "metaData.bin")
 	fileExists := err == nil || !os.IsNotExist(err)
 
-	metaFile, err := os.OpenFile("metaData.bin", os.O_RDWR|os.O_CREATE, 0664)
+	metaFile, err := os.OpenFile("data"+string(os.PathSeparator)+"metaData.bin", os.O_RDWR|os.O_CREATE, 0664)
 	if err != nil {
 		panic(err)
 	}
@@ -564,4 +564,92 @@ func FindLastSmallerKey(key string, keys []string) int64 {
 	return -1
 }
 
-func FindKey(key string)
+func CreateJointSSTable(data []byte, lastElementData []byte, summary_sparsity int, index_sparsity int) {
+	generation := getGeneration()
+
+	fileName := "data" + string(os.PathSeparator) + "L1" + string(os.PathSeparator) + "usertable-" + strconv.FormatUint(uint64(generation), 10) + "-joint.bin"
+	file, err := os.OpenFile(fileName, os.O_CREATE, 0664)
+	if err != nil {
+		panic(err)
+	}
+	defer file.Close()
+
+	var indexData []byte
+	var summaryData []byte
+	summaryData = append(summaryData, lastElementData...)
+
+	var keyBinary []byte
+	valueBinary := make([]byte, 8)
+	valueSizeBinary := []byte{0, 0, 0, 0, 0, 0, 0, 8}
+	keySizeBinary := make([]byte, 8)
+	var counter int = 0
+	var blockCounter uint64 = 0
+	var summaryStart uint64 = 0
+	var indexStart uint64 = 0
+	var footerStart uint64 = 0
+
+	//Creates the data segment while preparing data for the index segment
+	for channelResult := range PrepareSSTableBlocks(fileName, data, true, 0) {
+		blockManager.WriteBlock(file, channelResult.Block)
+		blockCounter += 1
+		if !bytes.Equal(keyBinary, channelResult.Key) {
+			if counter%index_sparsity == 0 {
+				keyBinary = channelResult.Key
+				binary.BigEndian.PutUint64(keySizeBinary, uint64(len(keyBinary)))
+				binary.BigEndian.PutUint64(valueBinary, uint64(channelResult.Block.GetOffset()))
+				indexData = append(indexData, keySizeBinary...)
+				indexData = append(indexData, valueSizeBinary...)
+				indexData = append(indexData, keyBinary...)
+				indexData = append(indexData, valueBinary...)
+			}
+			counter += 1
+		}
+	}
+
+	keyBinary = nil
+	indexStart = blockCounter
+	counter = 0
+
+	//Creates the index segment while preparing data for the summary segment
+	for channelResult := range PrepareSSTableBlocks(fileName, indexData, false, blockCounter) {
+		blockManager.WriteBlock(file, channelResult.Block)
+		blockCounter += 1
+		if !bytes.Equal(keyBinary, channelResult.Key) {
+			if counter%summary_sparsity == 0 {
+				keyBinary = channelResult.Key
+				binary.BigEndian.PutUint64(keySizeBinary, uint64(len(keyBinary)))
+				binary.BigEndian.PutUint64(valueBinary, uint64(channelResult.Block.GetOffset()))
+				summaryData = append(summaryData, keySizeBinary...)
+				summaryData = append(summaryData, valueSizeBinary...)
+				summaryData = append(summaryData, keyBinary...)
+				summaryData = append(summaryData, valueBinary...)
+			}
+			counter += 1
+		}
+	}
+
+	summaryStart = blockCounter
+
+	//Creates summary segment
+	for channelResult := range PrepareSSTableBlocks(fileName, summaryData, false, blockCounter) {
+		blockManager.WriteBlock(file, channelResult.Block)
+		blockCounter += 1
+	}
+
+	footerStart = blockCounter
+
+	var footerData []byte = make([]byte, 8*3)
+
+	footerData = binary.BigEndian.AppendUint64(footerData, indexStart)
+	footerData = binary.BigEndian.AppendUint64(footerData, summaryStart)
+	footerData = binary.BigEndian.AppendUint64(footerData, footerStart)
+
+	var blockData []byte = make([]byte, blockSize)
+	copy(blockData[9:], footerData)
+	blockData[4] = 0
+	binary.BigEndian.PutUint32(blockData[0:4], crc32.ChecksumIEEE(blockData[4:]))
+	binary.BigEndian.PutUint32(blockData[5:9], uint32(len(footerData)))
+
+	block := blockManager.InitBlock(fileName, blockCounter, blockData)
+	blockManager.WriteBlock(file, block)
+}
