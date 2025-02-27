@@ -152,12 +152,12 @@ func PrepareSSTableBlocks(filePath string, data []byte, dataBlocksCheck bool, bl
 }
 
 // Entires of summary and index are of fomrat |KEYSIZE|VALUESIZE|KEY|VALUE|
-// First entry of summary is |KEYSIZE|VALUESIZE|0*8B|VALUE*8B| and it's used to check if element is out of bounds
+// First entry of summary is |KEYSIZE|0|KEY|0| and it's used to check if element is out of bounds
 // Entires of data are |CRC|TIMESTAMP|TOMBSTONE|KEYSIZE|VALUZESIZE|KEY|VALUE
 func CreateSeparatedSSTable(data []byte, lastElementData []byte, summary_sparsity int, index_sparsity int) {
 	generation := getGeneration()
 
-	fileName := "data" + string(os.PathSeparator) + "L1" + string(os.PathSeparator) + "usertable-" + strconv.FormatUint(uint64(generation), 10)
+	fileName := "data" + string(os.PathSeparator) + "L0" + string(os.PathSeparator) + "usertable-" + strconv.FormatUint(uint64(generation), 10)
 	FILEDATAPATH := fileName + "-data.bin"
 	FILEINDEXPATH := fileName + "-index.bin"
 	FILESUMMARYPATH := fileName + "-summary.bin"
@@ -295,10 +295,10 @@ func findSeparated(filePath string, key string) []byte {
 		firstKey = false
 	}
 
-	blockOffset := 0
+	var blockOffset uint64 = 0
 
 	for true {
-		block := blockManager.ReadBlock(file, uint64(blockOffset))
+		block := blockManager.ReadBlock(file, blockOffset)
 		if block == nil {
 			break
 		} else if block.GetType() == 0 {
@@ -323,6 +323,9 @@ func findSeparated(filePath string, key string) []byte {
 
 			index := FindLastSmallerKey(key, keys)
 			if index == -2 {
+				if dataBlockCheck {
+					return nil
+				}
 				return lastValue
 			}
 			if index != -1 {
@@ -372,6 +375,9 @@ func findSeparated(filePath string, key string) []byte {
 			if keyConstruct == key {
 				return valueBytes
 			} else if key < keyConstruct {
+				if dataBlockCheck {
+					return nil
+				}
 				return lastValue
 			}
 			lastValue = valueBytes
@@ -436,11 +442,13 @@ func getKeysType0(block *blockManager.Block, dataBlockCheck bool) ([]string, [][
 		blockPointer += valueSize
 		keySlice = append(keySlice, string(keyBytes))
 		valueSlice = append(valueSlice, valueBytes)
+		tombstone = false
 	}
 
 	return keySlice, valueSlice, nil
 }
 
+// Returns key bytes, value bytes, key size left, value size left
 func getKeysType1(block *blockManager.Block, dataBlockCheck bool) ([]byte, []byte, uint64, uint64, error) {
 	blockData := block.GetData()
 	dataSize := uint64(block.GetSize())
@@ -494,6 +502,7 @@ func getKeysType1(block *blockManager.Block, dataBlockCheck bool) ([]byte, []byt
 	return keyBytes, valueBytes, keySize, valueSize, nil
 }
 
+// Returns key bytes, value bytes, key size left, value size left
 func getKeysType2(block *blockManager.Block, keySize uint64, valueSize uint64, tombstone bool) ([]byte, []byte, uint64, uint64, error) {
 	blockData := block.GetData()
 	blockPointer := uint64(9)
@@ -524,6 +533,7 @@ func getKeysType2(block *blockManager.Block, keySize uint64, valueSize uint64, t
 	return keyBytes, valueBytes, keySize, valueSize, nil
 }
 
+// Returns key bytes, value bytes
 func getKeysType3(block *blockManager.Block, keySize uint64, valueSize uint64, tombstone bool) ([]byte, []byte, error) {
 	blockData := block.GetData()
 	dataSize := uint64(block.GetSize())
@@ -532,7 +542,7 @@ func getKeysType3(block *blockManager.Block, keySize uint64, valueSize uint64, t
 	var valueBytes []byte = make([]byte, 0)
 
 	//Check if key data fits inside or overflows further
-	if blockPointer+keySize > dataSize {
+	if blockPointer+keySize+valueSize > dataSize {
 		return nil, nil, errors.New("The block is corrupted")
 	} else {
 		keyBytes = append(keyBytes, blockData[blockPointer:blockPointer+keySize]...)
@@ -564,10 +574,10 @@ func FindLastSmallerKey(key string, keys []string) int64 {
 	return -1
 }
 
-func CreateJointSSTable(data []byte, lastElementData []byte, summary_sparsity int, index_sparsity int) {
+func CreateCompactSSTable(data []byte, lastElementData []byte, summary_sparsity int, index_sparsity int) {
 	generation := getGeneration()
 
-	fileName := "data" + string(os.PathSeparator) + "L1" + string(os.PathSeparator) + "usertable-" + strconv.FormatUint(uint64(generation), 10) + "-joint.bin"
+	fileName := "data" + string(os.PathSeparator) + "L0" + string(os.PathSeparator) + "usertable-" + strconv.FormatUint(uint64(generation), 10) + "-compact.bin"
 	file, err := os.OpenFile(fileName, os.O_CREATE, 0664)
 	if err != nil {
 		panic(err)
@@ -652,4 +662,179 @@ func CreateJointSSTable(data []byte, lastElementData []byte, summary_sparsity in
 
 	block := blockManager.InitBlock(fileName, blockCounter, blockData)
 	blockManager.WriteBlock(file, block)
+}
+
+func findCompact(filePath string, key string) []byte {
+	if filePath[len(filePath)-11:] != "compact.bin" {
+		panic("Error: findCompact only works on compact sstables")
+	}
+
+	file, err := os.OpenFile(filePath, os.O_RDONLY, 0644)
+	if err != nil {
+		panic("Error: file not found: " + filePath)
+	}
+	defer file.Close()
+
+	fileInfo, err := file.Stat()
+	if err != nil {
+		panic("Error: can't get file info")
+	}
+
+	var indexStart uint64
+	var dataStart uint64
+	var footerStart uint64
+
+	footerBlock := blockManager.ReadBlock(file, uint64(fileInfo.Size())/blockSize-1)
+	footerData := footerBlock.GetData()
+	indexStart = binary.BigEndian.Uint64(footerData[9:17])
+	dataStart = binary.BigEndian.Uint64(footerData[17:25])
+	footerStart = binary.BigEndian.Uint64(footerData[25:33])
+
+	var firstEntry bool = true
+	var blockOffset uint64 = 0
+
+	var dataBlockCheck bool = false
+	var keys []string
+	var values [][]byte
+	var currentSection byte = 0
+
+	var valueBytes []byte
+	var keyBytes []byte
+	var valueSizeLeft uint64
+	var keySizeLeft uint64
+	var tombstone bool
+	var lastValue []byte = nil
+
+	for {
+		if currentSection == 0 && blockOffset >= indexStart {
+			break
+		} else if currentSection == 1 && blockOffset >= dataStart {
+			break
+		} else if currentSection == 2 {
+			dataBlockCheck = true
+			if blockOffset >= footerStart {
+				break
+			}
+		}
+		block := blockManager.ReadBlock(file, blockOffset)
+		if block == nil {
+			break
+		} else if block.GetType() == 0 {
+			keys, values, err = getKeysType0(block, dataBlockCheck)
+			if err != nil {
+				panic("Error reading block")
+			}
+
+			if firstEntry {
+				firstEntry = false
+				if key > keys[0] {
+					return nil
+				}
+				keys = keys[1:]
+				values = values[1:]
+			}
+
+			index := FindLastSmallerKey(key, keys)
+			if index == -1 {
+				blockOffset += 1
+				continue
+			} else if index == -2 {
+				if dataBlockCheck {
+					return nil
+				}
+				if lastValue == nil {
+					return nil
+				}
+				blockOffset = binary.BigEndian.Uint64(lastValue)
+				currentSection += 1
+				lastValue = nil
+				continue
+			}
+
+			blockOffset = binary.BigEndian.Uint64(values[index])
+			currentSection += 1
+			lastValue = nil
+			continue
+
+		} else if block.GetType() == 1 {
+			keyBytes, valueBytes, keySizeLeft, valueSizeLeft, err = getKeysType1(block, dataBlockCheck)
+			if err != nil {
+				panic(err)
+			}
+
+			if len(valueBytes) == 0 {
+				tombstone = true
+			} else {
+				tombstone = false
+			}
+		} else if block.GetType() == 2 {
+			keyBytesToAppend, valueBytesToAppend, keySizeLeftNew, valueSizeLeftNew, err := getKeysType2(block, keySizeLeft, valueSizeLeft, tombstone)
+			if err != nil {
+				panic(err)
+			}
+
+			keyBytes = append(keyBytes, keyBytesToAppend...)
+			valueBytes = append(valueBytes, valueBytesToAppend...)
+			keySizeLeft = keySizeLeftNew
+			valueSizeLeft = valueSizeLeftNew
+		} else if block.GetType() == 3 {
+			keyBytesToAppend, valueBytesToAppend, err := getKeysType3(block, keySizeLeft, valueSizeLeft, tombstone)
+			if err != nil {
+				panic(err)
+			}
+
+			keyBytes = append(keyBytes, keyBytesToAppend...)
+			valueBytes = append(valueBytes, valueBytesToAppend...)
+			keyConstruct := string(keyBytes)
+
+			if firstEntry {
+				firstEntry = false
+				if key > keyConstruct {
+					return nil
+				}
+			}
+
+			if keyConstruct == key {
+				if dataBlockCheck {
+					return valueBytes
+				}
+				blockOffset = binary.BigEndian.Uint64(valueBytes)
+				currentSection += 1
+
+				lastValue = nil
+				keyBytes = keyBytes[:0]
+				valueBytes = valueBytes[:0]
+				keySizeLeft = 0
+				valueSizeLeft = 0
+				tombstone = false
+				continue
+			} else if key < keyConstruct {
+				if dataBlockCheck {
+					return nil
+				}
+				if lastValue == nil {
+					return nil
+				}
+				blockOffset = binary.BigEndian.Uint64(lastValue)
+				currentSection += 1
+
+				lastValue = nil
+				keyBytes = keyBytes[:0]
+				valueBytes = valueBytes[:0]
+				keySizeLeft = 0
+				valueSizeLeft = 0
+				tombstone = false
+				continue
+			}
+			blockOffset += 1
+			lastValue = valueBytes
+			keyBytes = keyBytes[:0]
+			valueBytes = valueBytes[:0]
+			keySizeLeft = 0
+			valueSizeLeft = 0
+			tombstone = false
+		}
+	}
+
+	return nil
 }
