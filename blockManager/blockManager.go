@@ -1,19 +1,20 @@
 package blockManager
 
 import (
+	"NASP2024/config"
 	"io"
 	"os"
 )
 
 const (
 	BLOCK_HEADER_SIZE = 9
-	DATA_HEADER_SIZE  = 37
-	HEADER_SIZE       = 46
+	DATA_HEADER_SIZE  = 29
+	HEADER_SIZE       = 38
 )
 
 var bc *blockCache[*Block] = InitBlockCache[*Block](50)
 
-var blockSize = 1024 * 4
+var blockSize = config.GlobalBlockSize
 
 func WriteBlock(file *os.File, block *Block) {
 	_, ok := bc.findBlock(block.GetFilePath(), block.GetOffset())

@@ -1,107 +1,223 @@
-// Test used for earlier version of sstable
-// package ssTable
+package ssTable
 
-// import (
-// 	"NASP2024/blockManager"
-// 	"bytes"
-// 	"encoding/binary"
-// 	"hash/crc32"
-// 	"os"
-// 	"testing"
-// )
+import (
+	"NASP2024/config"
+	"bytes"
+	"encoding/binary"
+	"fmt"
+	"hash/crc32"
+	"os"
+	"strings"
+	"testing"
+)
 
-// // TestSingleEntryFitsInOneBlock tests a single entry that fits entirely within one block.
-// func TestSingleEntryFitsInOneBlock(t *testing.T) {
-// 	filePath := "test_single_entry.dat"
-// 	defer os.Remove(filePath)
+// Helper functions
+func checkEqual(t *testing.T, got, want interface{}, msg string) {
+	t.Helper()
+	if got != want {
+		t.Errorf("%s: got %v, want %v", msg, got, want)
+	}
+}
 
-// 	key := []byte("key")
-// 	value := []byte("value")
-// 	data := createEntry(key, value)
+func checkNil(t *testing.T, got interface{}, msg string) {
+	t.Helper()
+	if got != nil {
+		t.Errorf("%s: expected nil, got %v", msg, got)
+	}
+}
 
-// 	var block *blockManager.Block
-// 	for block = range PrepareBlocks(filePath, data) {
-// 		expectedCRC := crc32.ChecksumIEEE(block.GetData()[4:])
-// 		if binary.BigEndian.Uint32(block.GetData()[0:4]) != expectedCRC {
-// 			t.Errorf("CRC mismatch")
-// 		}
+func checkNotNil(t *testing.T, got interface{}, msg string) {
+	t.Helper()
+	if got == nil {
+		t.Errorf("%s: unexpected nil value", msg)
+	}
+}
 
-// 		blockData := block.GetData()[9 : 9+len(data)]
-// 		if !bytes.Equal(blockData, data) {
-// 			t.Errorf("Data mismatch")
-// 		}
-// 	}
-// }
+func TestSingleEntryFitsInOneBlock(t *testing.T) {
+	filePath := "test_single_entry.dat"
+	defer os.Remove(filePath)
 
-// // TestMultipleEntriesFitInOneBlock tests multiple entries fitting in one block.
-// func TestMultipleEntriesFitInOneBlock(t *testing.T) {
-// 	filePath := "test_multiple_entries.dat"
-// 	defer os.Remove(filePath)
+	key := "key"
+	value := "value"
+	data := SerializeKeyValue(key, value, false)
 
-// 	entries := [][]byte{
-// 		createEntry([]byte("key1"), []byte("value1")),
-// 		createEntry([]byte("key2"), []byte("value2")),
-// 	}
-// 	data := bytes.Join(entries, nil)
+	var block *channelResult
+	for block = range PrepareSSTableBlocks(filePath, data, true, 0) {
+		if block.Block == nil {
+			t.Errorf("Expected block, got nil")
+		}
+		expectedCRC := crc32.ChecksumIEEE(block.Block.GetData()[4:])
+		if binary.BigEndian.Uint32(block.Block.GetData()[0:4]) != expectedCRC {
+			t.Errorf("CRC mismatch")
+		}
+		blockData := block.Block.GetData()[9:]
+		if !bytes.Equal(blockData[:block.Block.GetSize()], data) {
+			t.Errorf("Data mismatch")
+		}
+	}
+}
 
-// 	ch := PrepareBlocks(filePath, data)
-// 	block := <-ch
+func TestMultipleEntriesFitInOneBlock(t *testing.T) {
+	filePath := "test_multiple_entries.dat"
+	defer os.Remove(filePath)
 
-// 	expectedData := block.GetData()[9 : 9+len(data)]
-// 	if !bytes.Equal(expectedData, data) {
-// 		t.Errorf("Data mismatch")
-// 	}
-// }
+	entries := [][]byte{
+		SerializeKeyValue("key1", "value1", false),
+		SerializeKeyValue("key2", "value2", false),
+	}
+	data := bytes.Join(entries, nil)
 
-// // TestEntrySpansMultipleBlocks tests a large entry spanning multiple blocks.
-// func TestEntrySpansMultipleBlocks(t *testing.T) {
-// 	filePath := "test_large_entry.dat"
-// 	defer os.Remove(filePath)
+	ch := PrepareSSTableBlocks(filePath, data, true, 0)
+	block := <-ch
 
-// 	key := []byte("key")
-// 	value := make([]byte, blockSize*2)
-// 	data := createEntry(key, value)
+	expectedData := block.Block.GetData()[9:]
+	if !bytes.Equal(expectedData[:block.Block.GetSize()], data) {
+		t.Errorf("Data mismatch")
+	}
+}
 
-// 	ch := PrepareBlocks(filePath, data)
+func TestEntrySpansMultipleBlocks(t *testing.T) {
+	filePath := "test_large_entry.dat"
+	defer os.Remove(filePath)
 
-// 	var reconstructed []byte
-// 	for block := range ch {
-// 		start := 9
-// 		end := start + len(data) - len(reconstructed)
-// 		if end > blockSize {
-// 			end = blockSize
-// 		}
-// 		reconstructed = append(reconstructed, block.GetData()[9:end]...)
-// 	}
+	key := "key"
+	value := string(make([]byte, blockSize*2))
+	data := SerializeKeyValue(key, value, false)
 
-// 	if !bytes.Equal(reconstructed, data) {
-// 		t.Errorf("Data mismatch")
-// 	}
-// }
+	ch := PrepareSSTableBlocks(filePath, data, true, 0)
 
-// // TestBoundaryConditions tests an entry exactly filling a block.
-// func TestBoundaryConditions(t *testing.T) {
-// 	filePath := "test_boundary.dat"
-// 	defer os.Remove(filePath)
+	var reconstructed []byte
+	for block := range ch {
+		start := 9
+		reconstructed = append(reconstructed, block.Block.GetData()[start:block.Block.GetSize()+9]...)
+	}
 
-// 	key := []byte("k")
-// 	valueSize := blockSize - 9 - 37 - len(key) // Adjust to fill exactly
-// 	value := make([]byte, valueSize)
-// 	data := createEntry(key, value)
+	if !bytes.Equal(reconstructed, data) {
+		t.Errorf("Data mismatch")
+	}
+}
 
-// 	ch := PrepareBlocks(filePath, data)
-// 	block := <-ch
+func TestBoundaryConditions(t *testing.T) {
+	filePath := "test_boundary.dat"
+	defer os.Remove(filePath)
 
-// 	if !bytes.Equal(block.GetData()[9:9+len(data)], data) {
-// 		t.Errorf("Data mismatch")
-// 	}
-// }
+	key := "k"
+	valueSize := int(blockSize) - 9 - 29 - len(key)
+	value := string(make([]byte, valueSize))
+	data := SerializeKeyValue(key, value, false)
 
-// func createEntry(key, value []byte) []byte {
-// 	entry := make([]byte, 37+len(key)+len(value))
-// 	binary.BigEndian.PutUint64(entry[21:29], uint64(len(key)))
-// 	binary.BigEndian.PutUint64(entry[29:37], uint64(len(value)))
-// 	copy(entry[37:37+len(key)], key)
-// 	copy(entry[37+len(key):], value)
-// 	return entry
-// }
+	ch := PrepareSSTableBlocks(filePath, data, true, 0)
+	block := <-ch
+
+	if !bytes.Equal(block.Block.GetData()[9:9+block.Block.GetSize()], data) {
+		t.Errorf("Data mismatch")
+	}
+}
+
+// TestBasicWriteAndRead tests basic SSTable functionality
+func TestBasicWriteAndRead(t *testing.T) {
+	// Setup
+	os.RemoveAll("data")
+
+	config.GlobalBlockSize = 100
+	key := "testKey"
+	value := "testValue"
+	data := SerializeKeyValue(key, value, false)
+	lastKeyData := SerializeKeyValue(key, "", false)
+
+	// Test separated SSTable
+	t.Run("Separated SSTable", func(t *testing.T) {
+		CreateSeparatedSSTable(data, lastKeyData, 1, 1)
+		result := Find(key)
+		checkNotNil(t, result, "Should find value in separated SSTable")
+		checkEqual(t, string(result), value, "Incorrect value in separated SSTable")
+	})
+
+	// Test compact SSTable
+	t.Run("Compact SSTable", func(t *testing.T) {
+		CreateCompactSSTable(data, lastKeyData, 1, 1)
+		result := Find(key)
+		checkNotNil(t, result, "Should find value in compact SSTable")
+		checkEqual(t, string(result), value, "Incorrect value in compact SSTable")
+	})
+}
+
+// TestTombstoneHandling verifies tombstone behavior
+func TestTombstoneHandlingSepareted(t *testing.T) {
+	os.RemoveAll("data")
+
+	key := "deletedKey"
+	data := SerializeKeyValue(key, "", true)
+	lastKeyData := SerializeKeyValue(key, "", true)
+
+	CreateSeparatedSSTable(data, lastKeyData, 1, 1)
+	result := Find(key)
+
+	// Check that the result is an empty slice instead of nil
+	if result == nil || len(result) != 0 {
+		t.Errorf("Expected an empty slice for tombstoned key, got: %v", result)
+	}
+}
+
+func TestTombstoneHandlingCompact(t *testing.T) {
+	os.RemoveAll("data")
+
+	key := "deletedKey"
+	data := SerializeKeyValue(key, "", true)
+	lastKeyData := SerializeKeyValue(key, "", true)
+
+	CreateCompactSSTable(data, lastKeyData, 1, 1)
+	result := Find(key)
+
+	// Check that the result is an empty slice instead of nil
+	if result == nil || len(result) != 0 {
+		t.Errorf("Expected an empty slice for tombstoned key, got: %v", result)
+	}
+}
+
+// TestMultiBlockEntries tests large values spanning multiple blocks
+func TestFindMultiBlockEntriesCompact(t *testing.T) {
+	os.RemoveAll("data")
+
+	var bigData []byte
+	for i := 0; i < 10; i++ {
+		key := fmt.Sprintf("key%04d", i)
+		value := strings.Repeat("x", int(blockSize)*2) // 2-block values
+		bigData = append(bigData, SerializeKeyValue(key, value, false)...)
+	}
+	lastKeyData := SerializeKeyValue(fmt.Sprintf("key%04d", 9), "", false)
+
+	CreateCompactSSTable(bigData, lastKeyData, 10, 10)
+
+	t.Run("RandomAccess", func(t *testing.T) {
+		for i := 0; i < 4; i++ {
+			testKey := fmt.Sprintf("key%04d", i*3)
+			result := Find(testKey)
+			checkNotNil(t, result, "Missing value for "+testKey)
+			checkEqual(t, len(result), int(blockSize)*2, "Incorrect value length")
+		}
+	})
+}
+
+func TestFindMultiBlockEntriesSeparated(t *testing.T) {
+	os.RemoveAll("data")
+
+	var bigData []byte
+	for i := 0; i < 10; i++ {
+		key := fmt.Sprintf("key%04d", i)
+		value := strings.Repeat("x", int(blockSize)*2) // 2-block values
+		bigData = append(bigData, SerializeKeyValue(key, value, false)...)
+	}
+	lastKeyData := SerializeKeyValue(fmt.Sprintf("key%04d", 9), "", false)
+
+	CreateSeparatedSSTable(bigData, lastKeyData, 5, 10)
+
+	t.Run("RandomAccess", func(t *testing.T) {
+		for i := 0; i < 4; i++ {
+			testKey := fmt.Sprintf("key%04d", i*3)
+			result := Find(testKey)
+			checkNotNil(t, result, "Missing value for "+testKey)
+			checkEqual(t, len(result), int(blockSize)*2, "Incorrect value length")
+		}
+	})
+}
