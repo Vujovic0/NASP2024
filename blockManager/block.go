@@ -4,8 +4,10 @@ type Block struct {
 	filePath  string
 	offset    int
 	blockType byte
-	blockSize int
-	data      []byte
+	//Data size, not including padding or header
+	dataSize int
+	//All data, including header and padding
+	data []byte
 }
 
 func InitBlock(filepath string, offset int, blockType byte, blockSize int, data []byte) *Block {
@@ -13,7 +15,7 @@ func InitBlock(filepath string, offset int, blockType byte, blockSize int, data 
 		filePath:  filepath,
 		offset:    offset,
 		blockType: blockType,
-		blockSize: blockSize,
+		dataSize:  blockSize,
 		data:      data,
 	}
 }
