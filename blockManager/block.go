@@ -11,7 +11,7 @@ type Block struct {
 	filePath  string
 	offset    uint64
 	blockType byte
-	//Data size, not including padding or header
+	//Data size, not including padding or block header
 	dataSize int
 	//All data, including header
 	data []byte
