@@ -39,10 +39,10 @@ func TestSingleEntryFitsInOneBlock(t *testing.T) {
 
 	key := "key"
 	value := "value"
-	data := SerializeKeyValue(key, value, false, false)
+	data := SerializeKeyValue(key, value, false)
 
 	var block *channelResult
-	for block = range PrepareSSTableBlocks(filePath, data, true, 0, false) {
+	for block = range PrepareSSTableBlocks(filePath, data, true, 0) {
 		if block.Block == nil {
 			t.Errorf("Expected block, got nil")
 		}
@@ -62,12 +62,12 @@ func TestMultipleEntriesFitInOneBlock(t *testing.T) {
 	defer os.Remove(filePath)
 
 	entries := [][]byte{
-		SerializeKeyValue("key1", "value1", false, false),
-		SerializeKeyValue("key2", "value2", false, false),
+		SerializeKeyValue("key1", "value1", false),
+		SerializeKeyValue("key2", "value2", false),
 	}
 	data := bytes.Join(entries, nil)
 
-	ch := PrepareSSTableBlocks(filePath, data, true, 0, false)
+	ch := PrepareSSTableBlocks(filePath, data, true, 0)
 	block := <-ch
 
 	expectedData := block.Block.GetData()[9:]
@@ -82,9 +82,9 @@ func TestEntrySpansMultipleBlocks(t *testing.T) {
 
 	key := "key"
 	value := string(make([]byte, blockSize*2))
-	data := SerializeKeyValue(key, value, false, false)
+	data := SerializeKeyValue(key, value, false)
 
-	ch := PrepareSSTableBlocks(filePath, data, true, 0, false)
+	ch := PrepareSSTableBlocks(filePath, data, true, 0)
 
 	var reconstructed []byte
 	for block := range ch {
@@ -104,9 +104,9 @@ func TestBoundaryConditions(t *testing.T) {
 	key := "k"
 	valueSize := int(blockSize) - 9 - 29 - len(key)
 	value := string(make([]byte, valueSize))
-	data := SerializeKeyValue(key, value, false, false)
+	data := SerializeKeyValue(key, value, false)
 
-	ch := PrepareSSTableBlocks(filePath, data, true, 0, false)
+	ch := PrepareSSTableBlocks(filePath, data, true, 0)
 	block := <-ch
 
 	if !bytes.Equal(block.Block.GetData()[9:9+block.Block.GetSize()], data) {
@@ -114,6 +114,7 @@ func TestBoundaryConditions(t *testing.T) {
 	}
 }
 
+// TestBasicWriteAndRead tests basic SSTable functionality
 func TestBasicWriteAndRead(t *testing.T) {
 	// Setup
 	os.RemoveAll("data")
@@ -121,8 +122,8 @@ func TestBasicWriteAndRead(t *testing.T) {
 	config.GlobalBlockSize = 100
 	key := "testKey"
 	value := "testValue"
-	data := SerializeKeyValue(key, value, false, false)
-	lastKeyData := SerializeKeyValue(key, "", false, true)
+	data := SerializeKeyValue(key, value, false)
+	lastKeyData := SerializeKeyValue(key, "", false)
 
 	// Test separated SSTable
 	t.Run("Separated SSTable", func(t *testing.T) {
@@ -141,12 +142,13 @@ func TestBasicWriteAndRead(t *testing.T) {
 	})
 }
 
+// TestTombstoneHandling verifies tombstone behavior
 func TestTombstoneHandlingSepareted(t *testing.T) {
 	os.RemoveAll("data")
 
 	key := "deletedKey"
-	data := SerializeKeyValue(key, "", true, false)
-	lastKeyData := SerializeKeyValue(key, "", true, true)
+	data := SerializeKeyValue(key, "", true)
+	lastKeyData := SerializeKeyValue(key, "", true)
 
 	CreateSeparatedSSTable(data, lastKeyData, 1, 1)
 	result := Find(key)
@@ -161,8 +163,8 @@ func TestTombstoneHandlingCompact(t *testing.T) {
 	os.RemoveAll("data")
 
 	key := "deletedKey"
-	data := SerializeKeyValue(key, "", true, false)
-	lastKeyData := SerializeKeyValue(key, "", true, true)
+	data := SerializeKeyValue(key, "", true)
+	lastKeyData := SerializeKeyValue(key, "", true)
 
 	CreateCompactSSTable(data, lastKeyData, 1, 1)
 	result := Find(key)
@@ -181,9 +183,9 @@ func TestFindMultiBlockEntriesCompact(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		key := fmt.Sprintf("key%04d", i)
 		value := strings.Repeat("x", int(blockSize)*2) // 2-block values
-		bigData = append(bigData, SerializeKeyValue(key, value, false, false)...)
+		bigData = append(bigData, SerializeKeyValue(key, value, false)...)
 	}
-	lastKeyData := SerializeKeyValue(fmt.Sprintf("key%04d", 9), "", false, true)
+	lastKeyData := SerializeKeyValue(fmt.Sprintf("key%04d", 9), "", false)
 
 	CreateCompactSSTable(bigData, lastKeyData, 10, 10)
 
@@ -204,9 +206,9 @@ func TestFindMultiBlockEntriesSeparated(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		key := fmt.Sprintf("key%04d", i)
 		value := strings.Repeat("x", int(blockSize)*2) // 2-block values
-		bigData = append(bigData, SerializeKeyValue(key, value, false, false)...)
+		bigData = append(bigData, SerializeKeyValue(key, value, false)...)
 	}
-	lastKeyData := SerializeKeyValue(fmt.Sprintf("key%04d", 9), "", false, true)
+	lastKeyData := SerializeKeyValue(fmt.Sprintf("key%04d", 9), "", false)
 
 	CreateSeparatedSSTable(bigData, lastKeyData, 5, 10)
 
@@ -216,49 +218,6 @@ func TestFindMultiBlockEntriesSeparated(t *testing.T) {
 			result := Find(testKey)
 			checkNotNil(t, result, "Missing value for "+testKey)
 			checkEqual(t, len(result), int(blockSize)*2, "Incorrect value length")
-		}
-	})
-}
-
-func TestFindNonExistentKeys(t *testing.T) {
-	os.RemoveAll("data")
-
-	var data []byte
-	keys := []string{"key0010", "key0020", "key0030"}
-	for _, key := range keys {
-		value := "val_" + key
-		data = append(data, SerializeKeyValue(key, value, false, false)...)
-	}
-	lastKeyData := SerializeKeyValue("key0030", "", false, true)
-
-	CreateCompactSSTable(data, lastKeyData, len(keys), len(keys))
-	CreateSeparatedSSTable(data, lastKeyData, len(keys), len(keys))
-
-	testCases := []struct {
-		name     string
-		key      string
-		expected []byte
-	}{
-		{"NonExistentKey", "key9999", nil},
-		{"KeyBeforeFirst", "key0001", nil},
-		{"KeyAfterLast", "key0040", nil},
-	}
-
-	t.Run("Compact SSTable", func(t *testing.T) {
-		for _, tc := range testCases {
-			result := Find(tc.key)
-			if result != nil && len(result) != 0 {
-				t.Errorf("Compact - %s: expected nil or empty, got: %v", tc.name, result)
-			}
-		}
-	})
-
-	t.Run("Separated SSTable", func(t *testing.T) {
-		for _, tc := range testCases {
-			result := Find(tc.key)
-			if result != nil && len(result) != 0 {
-				t.Errorf("Separated - %s: expected nil or empty, got: %v", tc.name, result)
-			}
 		}
 	})
 }

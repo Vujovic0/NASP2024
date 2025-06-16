@@ -2,10 +2,10 @@ package blockManager
 
 type key struct {
 	filePath string
-	offset   int
+	offset   uint64
 }
 
-func initKey(filePath string, offset int) key {
+func initKey(filePath string, offset uint64) key {
 	return key{
 		filePath: filePath,
 		offset:   offset,
@@ -31,7 +31,7 @@ func InitBlockCache[T BlockConstraint](maxLength int) *blockCache[T] {
 type BlockConstraint interface {
 	*Block
 	GetFilePath() string
-	GetOffset() int
+	GetOffset() uint64
 	GetData() []byte
 }
 
@@ -52,7 +52,7 @@ func (bc *blockCache[T]) addBlock(block T) {
 
 }
 
-func (bc *blockCache[T]) findBlock(filePath string, offset int) (T, bool) {
+func (bc *blockCache[T]) findBlock(filePath string, offset uint64) (T, bool) {
 	node, ok := bc.nodeMap[initKey(filePath, offset)]
 	if ok {
 		bc.pl.moveUp(node)
