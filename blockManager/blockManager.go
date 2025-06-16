@@ -16,16 +16,25 @@ var bc *blockCache[*Block] = InitBlockCache[*Block](50)
 
 var blockSize = config.GlobalBlockSize
 
+// Takes pointer to file and the block that should be written
+// First checks if a block with the same filepath and offset is in cache, and adds it if not
+// If it is in cache, it shallow copies the new one and assigns it to the old one
+// After adding to cache, it writes to file
 func WriteBlock(file *os.File, block *Block) {
-	_, ok := bc.findBlock(block.GetFilePath(), block.GetOffset())
+	cachedBlock, ok := bc.findBlock(block.GetFilePath(), block.GetOffset())
 	if !ok {
 		bc.addBlock(block)
+	} else {
+		*cachedBlock = *block
 	}
 
 	file.Seek(int64(block.GetOffset()*uint64(blockSize)), 0)
 	file.Write(block.GetData())
 }
 
+// Takes pointer to file and offset of block that it should read. Returns pointer to read block
+// First checks if the block is in cache, if yes it doesn't read from disk but just returns from cache
+// If block is not in cache it reads data and constructs the block object
 func ReadBlock(file *os.File, offset uint64) *Block {
 
 	block, ok := bc.findBlock(file.Name(), offset)

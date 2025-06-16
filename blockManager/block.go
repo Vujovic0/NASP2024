@@ -13,7 +13,7 @@ type Block struct {
 	blockType byte
 	//Data size, not including padding or block header
 	dataSize int
-	//All data, including header
+	//All data, including header and padding
 	data []byte
 }
 
