@@ -11,6 +11,18 @@ import (
 	"slices"
 )
 
+// Used in making index and summary segments
+type Tracker struct {
+	dataData    [config.GlobalBlockSize]byte
+	dataIndex   uint64
+	dataFile    *os.File
+	indexData   [config.GlobalBlockSize]byte
+	indexIndex  uint64
+	indexFile   *os.File
+	summaryData [config.GlobalBlockSize]byte
+	summaryFile *os.File ``
+}
+
 type Entry struct {
 	crc       uint32
 	tombstone bool
@@ -36,8 +48,10 @@ func checkLimit(offset uint64, limit uint64) (error, bool) {
 	if limit != 0 {
 		if offset == limit {
 			return nil, true
-		} else {
+		} else if offset > limit {
 			return errors.New("reading from index data not allowed"), false
+		} else {
+			return nil, false
 		}
 	}
 	return errors.New("limit of data segment can't be 0"), false
@@ -58,6 +72,7 @@ func getBlockEntries(file *os.File, offset uint64, limit uint64) ([]*Entry, uint
 	var block *blockManager.Block = blockManager.ReadBlock(file, offset)
 	if block.GetType() == 0 {
 		entryArray, err = getBlockEntriesTypeFull(block)
+		offset += 1
 	} else if block.GetType() == 1 {
 		entryArray, offset, err = getBlockEntriesTypeSplit(block, file, offset, limit)
 	} else {
@@ -216,7 +231,7 @@ func getBlockEntriesTypeSplit(block *blockManager.Block, file *os.File, offset u
 	}
 	offset += 1
 
-	entry := initEntry(crc, tombstone, uint64(timeStamp), key, value)
+	entry := initEntry(crc, tombstone, timeStamp, key, value)
 	return []*Entry{entry}, offset, nil
 }
 
@@ -229,7 +244,7 @@ func getLimits(files []*os.File) []uint64 {
 	for index, file := range files {
 		fileName := file.Name()
 		fileInfo, _ := file.Stat()
-		lastBlockOffset := uint64(fileInfo.Size()) / uint64(config.GlobalBlockSize)
+		lastBlockOffset := uint64(fileInfo.Size())/uint64(config.GlobalBlockSize) - 1
 		if fileName[len(fileName)-11:] == "compact.bin" {
 
 			lastBlock := blockManager.ReadBlock(file, lastBlockOffset)
@@ -237,7 +252,6 @@ func getLimits(files []*os.File) []uint64 {
 			fileLimit := binary.BigEndian.Uint64(fileLimitBytes)
 			tableLimits[index] = fileLimit
 		} else {
-			tableLimits = append(tableLimits, lastBlockOffset+1)
 			tableLimits[index] = lastBlockOffset + 1
 		}
 	}
@@ -246,7 +260,10 @@ func getLimits(files []*os.File) []uint64 {
 
 // takes file pointers of tables that are compacting and the name of the new file
 // doesn't close the files when they reach the end
-func MergeTables(files []*os.File, newFilePath string) {
+// doesn't delete the old tables
+func MergeTables(filesArg []*os.File, newFilePath string) {
+	files := make([]*os.File, len(filesArg))
+	copy(files, filesArg)
 	var entryArrays [][]*Entry = make([][]*Entry, len(files)) //entries for each iteration of block read are put here
 	var minimumEntry *Entry
 	var minimumIndex int                        //index of the file with the current smallest entry
@@ -254,8 +271,8 @@ func MergeTables(files []*os.File, newFilePath string) {
 	var filesBlockOffsets []uint64 = make([]uint64, len(files))
 	var dataToWrite []byte //data that will be written after reaching a byte threshold (block size)
 	var newFileBlockOffset uint64
-
-	var counter int = 0
+	var tracker *Tracker
+	var counter int = 0 // tracks the current file in the array of files it should compare minimum entry with
 
 	newFile, err := os.OpenFile(newFilePath, os.O_CREATE, 0664)
 	if err != nil {
@@ -269,13 +286,16 @@ func MergeTables(files []*os.File, newFilePath string) {
 		for counter < len(entryArrays) {
 			//try to fill up entryArrays, if failed pop at index
 			if len(entryArrays[counter]) == 0 {
-				entryArrays[counter], filesBlockOffsets[counter], _ = getBlockEntries(files[counter], uint64(filesBlockOffsets[counter]), tableLimits[counter])
+				entryArrays[counter], filesBlockOffsets[counter], err = getBlockEntries(files[counter], uint64(filesBlockOffsets[counter]), tableLimits[counter])
 
+				if err != nil {
+					panic(err)
+				}
 				if len(entryArrays[counter]) == 0 {
-					entryArrays = slices.Delete(entryArrays, counter, counter)
-					filesBlockOffsets = slices.Delete(filesBlockOffsets, counter, counter)
-					files = slices.Delete(files, counter, counter)
-					tableLimits = slices.Delete(tableLimits, counter, counter)
+					entryArrays = slices.Delete(entryArrays, counter, counter+1)
+					filesBlockOffsets = slices.Delete(filesBlockOffsets, counter, counter+1)
+					files = slices.Delete(files, counter, counter+1)
+					tableLimits = slices.Delete(tableLimits, counter, counter+1)
 					continue
 				}
 			}
@@ -300,42 +320,47 @@ func MergeTables(files []*os.File, newFilePath string) {
 			}
 			counter += 1
 		}
-		if minimumEntry.tombstone {
-			serializedEntry := SerializeEntry(minimumEntry)
-			dataToWrite, newFileBlockOffset = flushIfFull(dataToWrite, newFileBlockOffset, newFile, serializedEntry)
+		if minimumEntry != nil {
+			if !minimumEntry.tombstone {
+				serializedEntry := SerializeEntry(minimumEntry)
+				flushIfFull(tracker, serializedEntry)
+			}
+			//pops first element of the slice in O(1) time because slices are cool
+			//the first element represents the current smallest key in all tables
+			entryArrays[minimumIndex] = entryArrays[minimumIndex][1:]
+			minimumEntry = nil
+			counter = 0
 		}
-		//pops first element in O(1) time because slices are cool
-		entryArrays[minimumIndex] = entryArrays[minimumIndex][1:]
-		counter = 0
+
 	}
 }
 
-// Takes bytes that are serialized but not yet written to disk, the offset it should write to in the new file,
-// the file pointer and the bytes of the entry it should add to the already serialized bytes
-// Returns the new array and the new last block offset of the new file
+// Takes the tracker that tracks all data to write and offsets of their blocks as well as the
+// files the data should be written to,
+// and the data that is to be appended to tracker data
 //
 // If the serialized entry can't fit into array, empty out the array and then check if it can fit.
 // If it still can't fit flush it directly onto the disk.
 // If the array is already empty, directly flush entry to disk.
 // If the serialized entry can fit, just append.
-func flushIfFull(array []byte, offset uint64, file *os.File, serializedEntry []byte) ([]byte, uint64) {
-	if len(array)+len(serializedEntry) > config.GlobalBlockSize {
-		if len(array) == 0 {
-			offset = flushBytes(serializedEntry, offset, file)
+func flushIfFull(tracker *Tracker, serializedEntry []byte) {
+	dataArray := tracker.dataData
+	dataFile := files[0]
+	if len(dataArray)+len(serializedEntry) > config.GlobalBlockSize {
+		if len(dataArray) == 0 {
+			flushBytes(serializedEntry, offset, file)
 		} else {
-			offset = flushBytes(array, offset, file)
-			array = array[:0]
+			offset = flushBytes(dataArray, offset, file)
+			dataArray = dataArray[:0]
 			if len(serializedEntry) > config.GlobalBlockSize {
 				offset = flushBytes(serializedEntry, offset, file)
 			} else {
-				array = append(array, serializedEntry...)
+				dataArray = append(dataArray, serializedEntry...)
 			}
 		}
 	} else {
-		array = append(array, serializedEntry...)
+		dataArray = append(dataArray, serializedEntry...)
 	}
-
-	return array, offset
 }
 
 func flushBytes(array []byte, offset uint64, file *os.File) uint64 {

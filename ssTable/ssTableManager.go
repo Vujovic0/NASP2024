@@ -913,11 +913,12 @@ func findSeparated(filePath string, key string, offset uint64) ([]byte, error) {
 }
 
 // | CRC 4B | TimeStamp 8B | Tombstone 1B | Keysize 8B | Valuesize 8B | Key... | Value... |
-func SerializeKeyValue(key string, value string, tombstone bool, lastElementCheck bool) []byte {
+// KeyOnlyCheck will assure that only the key with its size is serialized
+func SerializeKeyValue(key string, value string, tombstone bool, keyOnlyCheck bool) []byte {
 	keyBytes := []byte(key)
 	keySize := len(keyBytes)
 	var dataBytes []byte
-	if lastElementCheck {
+	if keyOnlyCheck {
 		dataBytes = make([]byte, 8+keySize)
 		binary.BigEndian.PutUint64(dataBytes[0:8], uint64(keySize))
 		copy(dataBytes[8:], keyBytes)
