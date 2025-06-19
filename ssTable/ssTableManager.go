@@ -9,7 +9,15 @@ import (
 	"hash/crc32"
 	"os"
 	"strconv"
+	"strings"
 	"time"
+)
+
+const (
+	BlockTypeFull   = 0
+	BlockTypeStart  = 1
+	BlockTypeMiddle = 2
+	BlockTypeEnd    = 3
 )
 
 var blockSize uint64 = uint64(config.GlobalBlockSize)
@@ -205,7 +213,13 @@ func getGeneration(increment bool) uint64 {
 // DataBlockCheck is true when reading from a data segment in sstable because entries
 // in summary and index don't have CRC, timestamp and tombstone
 // If value of an entry is an empty slice, it means that the tombstone is set to 1
-func getKeysType0(block *blockManager.Block, dataBlockCheck bool, firstSummaryBlock bool) ([]string, [][]byte, error) {
+func getKeysType0(block *blockManager.Block, dataBlockCheck bool, summaryBound uint64) ([][]byte, [][]byte, error) {
+	firstSummaryBlock := false
+	if summaryBound != 0 {
+		if block.GetOffset() == summaryBound {
+			firstSummaryBlock = true
+		}
+	}
 	blockData := block.GetData()
 	dataSize := uint64(block.GetSize())
 	dataSize += 9
@@ -215,7 +229,7 @@ func getKeysType0(block *blockManager.Block, dataBlockCheck bool, firstSummaryBl
 		keyOffset = 13
 	}
 	blockPointer := uint64(9 + keyOffset)
-	var keySlice []string
+	var keySlice [][]byte
 	var valueSlice [][]byte
 	var valueSize uint64
 
@@ -257,7 +271,7 @@ func getKeysType0(block *blockManager.Block, dataBlockCheck bool, firstSummaryBl
 			valueBytes = blockData[blockPointer : blockPointer+valueSize]
 			blockPointer += valueSize
 		}
-		keySlice = append(keySlice, string(keyBytes))
+		keySlice = append(keySlice, keyBytes)
 		valueSlice = append(valueSlice, valueBytes)
 		tombstone = false
 		firstSummaryBlock = false
@@ -267,7 +281,13 @@ func getKeysType0(block *blockManager.Block, dataBlockCheck bool, firstSummaryBl
 }
 
 // Returns key bytes, value bytes, key size left, value size left
-func getKeysType1(block *blockManager.Block, dataBlockCheck bool, firstSummaryBlock bool) ([]byte, []byte, uint64, uint64, error) {
+func getKeysType1(block *blockManager.Block, dataBlockCheck bool, summaryBound uint64) ([]byte, []byte, uint64, uint64, error) {
+	firstSummaryBlock := false
+	if summaryBound != 0 {
+		if block.GetOffset() == summaryBound {
+			firstSummaryBlock = true
+		}
+	}
 	blockData := block.GetData()
 	dataSize := uint64(block.GetSize())
 	dataSize += 9
@@ -392,11 +412,12 @@ func getKeysType3(block *blockManager.Block, keySize uint64, valueSize uint64, t
 // Returns index if element is found in string slice;
 // If element is not found and search should continue, return -1;
 // If element is not found and search should not continue, return -2
-func FindLastSmallerKey(key string, keys []string) int64 {
+func FindLastSmallerKey(key []byte, keys [][]byte) int64 {
 	for i := int64(0); i < int64(len(keys)); i++ {
-		if key == keys[i] {
+		compareResult := bytes.Compare(key, keys[i])
+		if compareResult == 0 {
 			return i
-		} else if key < keys[i] {
+		} else if compareResult == -1 {
 			if i != 0 {
 				return i - 1
 			} else {
@@ -408,7 +429,8 @@ func FindLastSmallerKey(key string, keys []string) int64 {
 }
 
 // Entires of summary and index are of fomrat |KEYSIZE|VALUESIZE|KEY|VALUE|
-// First entry of summary is |KEYSIZE|KEY| and it's used to check if element is out of bounds
+// First entry of summary is last entry of data format:
+// |KEYSIZE|KEY| and it's used to check if element is out of bounds
 // Entires of data are |CRC|TIMESTAMP|TOMBSTONE|KEYSIZE|VALUESIZE|KEY|VALUE
 func CreateCompactSSTable(data []byte, lastElementData []byte, summary_sparsity int, index_sparsity int) {
 	if _, err := os.Stat("data"); os.IsNotExist(err) {
@@ -433,7 +455,6 @@ func CreateCompactSSTable(data []byte, lastElementData []byte, summary_sparsity 
 
 	var indexData []byte
 	var summaryData []byte
-	summaryData = append(summaryData, lastElementData...)
 
 	var keyBinary []byte
 	valueBinary := make([]byte, 8)
@@ -485,7 +506,14 @@ func CreateCompactSSTable(data []byte, lastElementData []byte, summary_sparsity 
 	summaryStart = blockCounter
 
 	//Creates summary segment
-	for channelResult := range PrepareSSTableBlocks(fileName, summaryData, false, blockCounter, true) {
+	for channelResult := range PrepareSSTableBlocks(fileName, summaryData, false, blockCounter, false) {
+		blockManager.WriteBlock(file, channelResult.Block)
+		blockCounter += 1
+	}
+
+	boundStart := blockCounter
+
+	for channelResult := range PrepareSSTableBlocks(fileName, lastElementData, false, blockCounter, true) {
 		blockManager.WriteBlock(file, channelResult.Block)
 		blockCounter += 1
 	}
@@ -497,6 +525,7 @@ func CreateCompactSSTable(data []byte, lastElementData []byte, summary_sparsity 
 	footerData = binary.BigEndian.AppendUint64(footerData, indexStart)
 	footerData = binary.BigEndian.AppendUint64(footerData, summaryStart)
 	footerData = binary.BigEndian.AppendUint64(footerData, footerStart)
+	footerData = binary.BigEndian.AppendUint64(footerData, boundStart)
 
 	var blockData []byte = make([]byte, blockSize)
 	copy(blockData[9:], footerData)
@@ -509,7 +538,7 @@ func CreateCompactSSTable(data []byte, lastElementData []byte, summary_sparsity 
 }
 
 // Entires of summary and index are of fomrat |KEYSIZE|VALUESIZE|KEY|VALUE|
-// First entry of summary is |KEYSIZE|KEY| and it's used to check if element is out of bounds
+// First entry of summary is |8B KEYSIZE|KEY...| and it's used to check if element is out of bounds
 // Entires of data are |CRC|TIMESTAMP|TOMBSTONE|KEYSIZE|VALUESIZE|KEY|VALUE
 func CreateSeparatedSSTable(data []byte, lastElementData []byte, summary_sparsity int, index_sparsity int) {
 	if _, err := os.Stat("data"); os.IsNotExist(err) {
@@ -550,18 +579,17 @@ func CreateSeparatedSSTable(data []byte, lastElementData []byte, summary_sparsit
 
 	var indexData []byte
 	var summaryData []byte
-	summaryData = append(summaryData, lastElementData...)
 
 	var keyBinary []byte
 	valueBinary := make([]byte, 8)
 	keySizeBinary := make([]byte, 8)
-	var counter int = 0
+	var counter uint64 = 0
 
 	//Creates the data segment while preparing data for the index segment
 	for channelResult := range PrepareSSTableBlocks(FILEDATAPATH, data, true, 0, false) {
 		blockManager.WriteBlock(fileData, channelResult.Block)
 		if !bytes.Equal(keyBinary, channelResult.Key) {
-			if counter%index_sparsity == 0 {
+			if counter%uint64(index_sparsity) == 0 {
 				keyBinary = channelResult.Key
 				binary.BigEndian.PutUint64(keySizeBinary, uint64(len(keyBinary)))
 				binary.BigEndian.PutUint64(valueBinary, uint64(channelResult.Block.GetOffset()))
@@ -580,7 +608,7 @@ func CreateSeparatedSSTable(data []byte, lastElementData []byte, summary_sparsit
 	for channelResult := range PrepareSSTableBlocks(FILEINDEXPATH, indexData, false, 0, false) {
 		blockManager.WriteBlock(fileIndex, channelResult.Block)
 		if !bytes.Equal(keyBinary, channelResult.Key) {
-			if counter%summary_sparsity == 0 {
+			if counter%uint64(summary_sparsity) == 0 {
 				keyBinary = channelResult.Key
 				binary.BigEndian.PutUint64(keySizeBinary, uint64(len(keyBinary)))
 				binary.BigEndian.PutUint64(valueBinary, uint64(channelResult.Block.GetOffset()))
@@ -592,13 +620,38 @@ func CreateSeparatedSSTable(data []byte, lastElementData []byte, summary_sparsit
 		}
 	}
 
+	counter = 0
 	//Creates summary segment
-	for channelResult := range PrepareSSTableBlocks(FILESUMMARYPATH, summaryData, false, 0, true) {
+	for channelResult := range PrepareSSTableBlocks(FILESUMMARYPATH, summaryData, false, 0, false) {
 		blockManager.WriteBlock(fileSummary, channelResult.Block)
+		counter += 1
 	}
+
+	boundStart := counter
+
+	for channelResult := range PrepareSSTableBlocks(FILESUMMARYPATH, lastElementData, false, uint64(counter), true) {
+		blockManager.WriteBlock(fileSummary, channelResult.Block)
+		counter += 1
+	}
+
+	footerStart := counter
+
+	var footerData []byte = make([]byte, 0)
+
+	footerData = binary.BigEndian.AppendUint64(footerData, uint64(footerStart))
+	footerData = binary.BigEndian.AppendUint64(footerData, uint64(boundStart))
+
+	var blockData []byte = make([]byte, config.GlobalBlockSize)
+	copy(blockData[9:], footerData)
+	blockData[4] = 0
+	binary.BigEndian.PutUint32(blockData[0:4], crc32.ChecksumIEEE(blockData[4:]))
+	binary.BigEndian.PutUint32(blockData[5:9], uint32(len(footerData)))
+
+	block := blockManager.InitBlock(fileName, counter, blockData)
+	blockManager.WriteBlock(fileSummary, block)
 }
 
-func findCompact(filePath string, key string) ([]byte, error) {
+func findCompact(filePath string, key []byte) ([]byte, error) {
 	if filePath[len(filePath)-11:] != "compact.bin" {
 		panic("Error: findCompact only works on compact sstables")
 	}
@@ -623,12 +676,20 @@ func findCompact(filePath string, key string) ([]byte, error) {
 	indexStart = binary.BigEndian.Uint64(footerData[9:17])
 	summaryStart = binary.BigEndian.Uint64(footerData[17:25])
 	footerStart = binary.BigEndian.Uint64(footerData[25:33])
+	maximumBound, err := getMaximumBound(file)
+	boundIndex := getBoundIndex(file)
+	if err != nil {
+		panic(err)
+	}
 
-	var firstEntry bool = true
+	if bytes.Compare(maximumBound, key) == -1 {
+		return nil, nil
+	}
+
 	var blockOffset uint64 = summaryStart
 
 	var dataBlockCheck bool = false
-	var keys []string
+	var keys [][]byte
 	var values [][]byte
 	var currentSection byte = 0
 
@@ -654,18 +715,9 @@ func findCompact(filePath string, key string) ([]byte, error) {
 		if block == nil {
 			break
 		} else if block.GetType() == 0 {
-			keys, values, err = getKeysType0(block, dataBlockCheck, firstEntry)
+			keys, values, err = getKeysType0(block, dataBlockCheck, boundIndex)
 			if err != nil {
 				panic("Error reading block")
-			}
-
-			if firstEntry {
-				firstEntry = false
-				if key > keys[0] {
-					return nil, nil
-				}
-				keys = keys[1:]
-				values = values[1:]
 			}
 
 			index := FindLastSmallerKey(key, keys)
@@ -698,7 +750,7 @@ func findCompact(filePath string, key string) ([]byte, error) {
 			continue
 
 		} else if block.GetType() == 1 {
-			keyBytes, valueBytes, keySizeLeft, valueSizeLeft, err = getKeysType1(block, dataBlockCheck, firstEntry)
+			keyBytes, valueBytes, keySizeLeft, valueSizeLeft, err = getKeysType1(block, dataBlockCheck, boundIndex)
 			if err != nil {
 				panic(err)
 			}
@@ -728,16 +780,9 @@ func findCompact(filePath string, key string) ([]byte, error) {
 
 			keyBytes = append(keyBytes, keyBytesToAppend...)
 			valueBytes = append(valueBytes, valueBytesToAppend...)
-			keyConstruct := string(keyBytes)
 
-			if firstEntry {
-				firstEntry = false
-				if key > keyConstruct {
-					return nil, nil
-				}
-			}
-
-			if keyConstruct == key {
+			compareResult := bytes.Compare(keyBytes, key)
+			if compareResult == 0 {
 				if dataBlockCheck {
 					return valueBytes, nil
 				}
@@ -751,7 +796,7 @@ func findCompact(filePath string, key string) ([]byte, error) {
 				valueSizeLeft = 0
 				tombstone = false
 				continue
-			} else if key < keyConstruct {
+			} else if compareResult > 0 {
 				if dataBlockCheck {
 					return nil, nil
 				}
@@ -786,7 +831,7 @@ func findCompact(filePath string, key string) ([]byte, error) {
 // If key stops being larger than comparing key, return value of last key
 // First key in summary is always the last key in data, so if the searched key is greater it means that it doesn't exist
 // Returns nil if not found
-func findSeparated(filePath string, key string, offset uint64) ([]byte, error) {
+func findSeparated(filePath string, key []byte, offset uint64) ([]byte, error) {
 	file, err := os.OpenFile(filePath, os.O_RDONLY, 0644)
 	if err != nil {
 		return nil, err
@@ -796,7 +841,7 @@ func findSeparated(filePath string, key string, offset uint64) ([]byte, error) {
 	var dataBlockCheck bool = true
 	var tombstone bool = false
 
-	var keys []string = make([]string, 0)
+	var keys [][]byte = make([][]byte, 0)
 	var keyBytes []byte = make([]byte, 0)
 
 	var valueBytes []byte = make([]byte, 0)
@@ -806,17 +851,26 @@ func findSeparated(filePath string, key string, offset uint64) ([]byte, error) {
 	var keySizeLeft uint64 = 0
 	var valueSizeLeft uint64 = 0
 
+	var boundIndex uint64 = 0
+
 	fileType := filePath[len(filePath)-11:]
-
-	var firstKey bool = false
-
 	if fileType == "summary.bin" {
-		firstKey = true
-	}
+		maximumBound, err := getMaximumBound(file)
+		if err != nil {
+			panic(err)
+		}
 
+		if bytes.Compare(maximumBound, key) == -1 {
+			return nil, nil
+		}
+		boundIndex = getBoundIndex(file)
+	}
 	var blockOffset uint64 = offset
 
 	for {
+		if boundIndex != 0 && boundIndex == blockOffset {
+			return lastValue, nil
+		}
 		block := blockManager.ReadBlock(file, blockOffset)
 		if block == nil {
 			break
@@ -826,18 +880,9 @@ func findSeparated(filePath string, key string, offset uint64) ([]byte, error) {
 			} else {
 				dataBlockCheck = false
 			}
-			keys, values, err = getKeysType0(block, dataBlockCheck, firstKey)
+			keys, values, err = getKeysType0(block, dataBlockCheck, boundIndex)
 			if err != nil {
 				panic(err)
-			}
-
-			if firstKey {
-				if key > keys[0] {
-					return nil, nil
-				}
-				firstKey = false
-				keys = keys[1:]
-				values = values[1:]
 			}
 
 			index := FindLastSmallerKey(key, keys)
@@ -853,7 +898,7 @@ func findSeparated(filePath string, key string, offset uint64) ([]byte, error) {
 			lastValue = values[len(values)-1]
 
 		} else if block.GetType() == 1 {
-			keyBytes, valueBytes, keySizeLeft, valueSizeLeft, err = getKeysType1(block, dataBlockCheck, firstKey)
+			keyBytes, valueBytes, keySizeLeft, valueSizeLeft, err = getKeysType1(block, dataBlockCheck, boundIndex)
 			if err != nil {
 				panic(err)
 			}
@@ -882,18 +927,12 @@ func findSeparated(filePath string, key string, offset uint64) ([]byte, error) {
 
 			keyBytes = append(keyBytes, keyBytesToAppend...)
 			valueBytes = append(valueBytes, valueBytesToAppend...)
-			keyConstruct := string(keyBytes)
 
-			if firstKey {
-				firstKey = false
-				if key > keyConstruct {
-					return nil, nil
-				}
-			}
+			compareResult := bytes.Compare(keyBytes, key)
 
-			if keyConstruct == key {
+			if compareResult == 0 {
 				return valueBytes, nil
-			} else if key < keyConstruct {
+			} else if compareResult > 0 {
 				if dataBlockCheck {
 					return nil, nil
 				}
@@ -950,7 +989,7 @@ func SerializeKeyValue(key string, value string, tombstone bool, keyOnlyCheck bo
 }
 
 // Takes key and returns the value associated with the key as a byte slice.
-func Find(key string) []byte {
+func Find(key []byte) []byte {
 	generation := getGeneration(false)
 	levels, err := os.ReadDir("data")
 	if err != nil {
@@ -1016,4 +1055,75 @@ func Find(key string) []byte {
 		generation -= 1
 	}
 	return nil
+}
+
+// Last element is the maximum bound for the sstable
+// This function returns this key in []byte
+func getMaximumBound(summaryFile *os.File) ([]byte, error) {
+	boundStart := getBoundIndex(summaryFile)
+	block := blockManager.ReadBlock(summaryFile, uint64(boundStart))
+	if block == nil {
+		return nil, errors.New("block can not be nil")
+	}
+	if block.GetType() == BlockTypeMiddle || block.GetType() == BlockTypeEnd {
+		return nil, errors.New("block should be type 1 or 0")
+	}
+	data := fetchData(block)
+	keySizeBytes := data[:8]
+	keySize := binary.BigEndian.Uint64(keySizeBytes)
+	keyBytes := data[8 : 8+keySize] // key value of the last element
+	boundStart += 1
+	if block.GetType() == 0 {
+		return keyBytes, nil
+	}
+	for {
+		block := blockManager.ReadBlock(summaryFile, uint64(boundStart))
+		data = fetchData(block)
+		keyBytes = append(keyBytes, data...)
+		if block.GetType() == 3 {
+			break
+		}
+		boundStart += 1
+	}
+	return keyBytes, nil
+
+}
+
+// Returns data of the block not including header or padding
+func fetchData(block *blockManager.Block) []byte {
+	blockData := block.GetData()
+	blockHeader := 9
+	dataSizeBytes := blockData[5 : 5+4]
+	dataSize := binary.BigEndian.Uint32(dataSizeBytes)
+	data := blockData[blockHeader : blockHeader+int(dataSize)]
+	return data
+}
+
+// Takes file that is either "compact.bin" or "summary.bin". It reads the index where
+// maximum bound element starts and returns it
+func getBoundIndex(file *os.File) uint64 {
+	fileName := file.Name()
+	fileInfo, err := file.Stat()
+	if err != nil {
+		panic(err)
+	}
+	fileSize := fileInfo.Size()
+	footerBlockIndex := fileSize/int64(config.GlobalBlockSize) - 1
+
+	footerBlock := blockManager.ReadBlock(file, uint64(footerBlockIndex))
+	data := fetchData(footerBlock)
+	switch {
+	case strings.HasSuffix(fileName, "compact.bin"):
+		if len(data) < 8*4 {
+			panic("footer doesn't have all indices")
+		}
+		return binary.BigEndian.Uint64(data[8*3 : 8*4])
+	case strings.HasSuffix(fileName, "summary.bin"):
+		if len(data) < 8*2 {
+			panic("footer doesn't have all indices")
+		}
+		return binary.BigEndian.Uint64(data[8*1 : 8*2])
+	default:
+		panic("file doesn't have footer")
+	}
 }
