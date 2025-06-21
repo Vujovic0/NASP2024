@@ -1,8 +1,8 @@
 package config
 
-const pageSize int = 4096
-const GlobalBlockSize int = pageSize * 1
-const MaxLSMLevel byte = 3
-const IndexSparsity byte = 5
-const SummarySparsity byte = 5
-const Compress bool = false
+var pageSize int = 4096
+var GlobalBlockSize int = pageSize * 1
+var MaxLSMLevel byte = 3
+var IndexSparsity byte = 5
+var SummarySparsity byte = 5
+var Compress bool = false
