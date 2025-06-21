@@ -46,7 +46,7 @@ func TestSingleEntryFitsInOneBlock(t *testing.T) {
 			t.Errorf("Expected block, got nil")
 		}
 		expectedCRC := crc32.ChecksumIEEE(block.Block.GetData()[4:])
-		if binary.BigEndian.Uint32(block.Block.GetData()[0:4]) != expectedCRC {
+		if binary.LittleEndian.Uint32(block.Block.GetData()[0:4]) != expectedCRC {
 			t.Errorf("CRC mismatch")
 		}
 		blockData := block.Block.GetData()[9:]

@@ -1,6 +1,3 @@
-//go:build ignore
-// +build ignore
-
 package ssTable
 
 import (
@@ -9,27 +6,53 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
-	"hash/crc32"
 	"os"
 	"slices"
+	"strings"
 )
 
 // Used in making index and summary segments
 type Tracker struct {
-	dataData    [config.GlobalBlockSize]byte
-	dataIndex   uint64
-	dataFile    *os.File
-	indexData   [config.GlobalBlockSize]byte
-	indexIndex  uint64
-	indexFile   *os.File
-	summaryData [config.GlobalBlockSize]byte
-	summaryFile *os.File ``
+	dataTracker    *DataTracker
+	indexTracker   *IndexTracker
+	summaryTracker *SummaryTracker
 }
 
+type DataTracker struct {
+	data   []byte  //only the data that will fit inside one block
+	offset *uint64 //offset in the data file where to write new block
+	file   *os.File
+}
+
+type IndexTracker struct {
+	data             []byte  //all data that will be written to disk
+	offset           *uint64 //offset in the index file where to write new block
+	file             *os.File
+	sparsity_counter uint64 //when sparsity_counter moduo global sparsity value equals 0, write to index data
+}
+
+type SummaryTracker struct {
+	data             []byte   //all data that will be written to disk
+	offset           *uint64  //offset in the summary file where to write new block
+	file             *os.File //where to write data
+	lastEntry        *Entry   //used as boundary
+	sparsity_counter uint64   //when sparsity_counter moduo global sparsity value equals 0, write to summary data
+}
+
+// Header represent the number of bytes each header field takes up
+type Header struct {
+	crcBytes       int
+	timeStampBytes int
+	tombstoneBytes int
+	keySizeBytes   int
+	valueSizeBytes int
+}
+
+// | CRC 4B | TimeStamp 8B | Tombstone 1B | Keysize 8B | Valuesize 8B | Key... | Value... |
 type Entry struct {
 	crc       uint32
-	tombstone bool
 	timeStamp uint64
+	tombstone bool
 	key       []byte
 	value     []byte
 }
@@ -98,8 +121,8 @@ func getBlockEntriesTypeFull(block *blockManager.Block) ([]*Entry, error) {
 	var entryArray []*Entry
 
 	for blockPointer < uint64(block.GetSize()) {
-		crc := binary.BigEndian.Uint32(blockData[blockPointer : blockPointer+4])
-		timeStamp := binary.BigEndian.Uint64(blockData[blockPointer+4 : blockPointer+12])
+		crc := binary.LittleEndian.Uint32(blockData[blockPointer : blockPointer+4])
+		timeStamp := binary.LittleEndian.Uint64(blockData[blockPointer+4 : blockPointer+12])
 
 		if blockData[blockPointer+12] == 1 {
 			tombstone = true
@@ -109,11 +132,11 @@ func getBlockEntriesTypeFull(block *blockManager.Block) ([]*Entry, error) {
 			return nil, errors.New("tombstone byte should be 1 or 0")
 		}
 
-		keySize := binary.BigEndian.Uint64(blockData[blockPointer+13 : blockPointer+21])
+		keySize := binary.LittleEndian.Uint64(blockData[blockPointer+13 : blockPointer+21])
 		if !tombstone {
 			keyStart := blockPointer + 29
 			keyEnd := keyStart + keySize
-			valueSize := binary.BigEndian.Uint64(blockData[blockPointer+21 : blockPointer+29])
+			valueSize := binary.LittleEndian.Uint64(blockData[blockPointer+21 : blockPointer+29])
 			valEnd := keyEnd + valueSize
 			key = blockData[keyStart:keyEnd]
 			value = blockData[keyEnd:valEnd]
@@ -146,8 +169,8 @@ func getBlockEntriesTypeSplit(block *blockManager.Block, file *os.File, offset u
 	var value []byte
 
 	// first block
-	crc := binary.BigEndian.Uint32(blockData[0:4])
-	timeStamp := binary.BigEndian.Uint64(blockData[4:12])
+	crc := binary.LittleEndian.Uint32(blockData[0:4])
+	timeStamp := binary.LittleEndian.Uint64(blockData[4:12])
 
 	var valueSize uint64
 
@@ -159,10 +182,10 @@ func getBlockEntriesTypeSplit(block *blockManager.Block, file *os.File, offset u
 		return nil, 0, errors.New("tombstone byte should be 1 or 0")
 	}
 
-	keySize := binary.BigEndian.Uint64(blockData[13:21])
+	keySize := binary.LittleEndian.Uint64(blockData[13:21])
 
 	if !tombstone {
-		valueSize = binary.BigEndian.Uint64(blockData[21:29])
+		valueSize = binary.LittleEndian.Uint64(blockData[21:29])
 		if len(blockData[29:]) <= int(keySize) {
 			key = append(key, blockData[29:]...)
 			keySize = keySize - uint64(len(blockData[29:]))
@@ -252,7 +275,7 @@ func getLimits(files []*os.File) []uint64 {
 
 			lastBlock := blockManager.ReadBlock(file, lastBlockOffset)
 			fileLimitBytes := lastBlock.GetData()[9 : 9+8]
-			fileLimit := binary.BigEndian.Uint64(fileLimitBytes)
+			fileLimit := binary.LittleEndian.Uint64(fileLimitBytes)
 			tableLimits[index] = fileLimit
 		} else {
 			tableLimits[index] = lastBlockOffset + 1
@@ -261,9 +284,11 @@ func getLimits(files []*os.File) []uint64 {
 	return tableLimits
 }
 
-// takes file pointers of tables that are compacting and the name of the new file
+// takes file pointers of tables that are compacting and the name of the new file for data
+// newFilePath should have suffix "compact.bin" or "data.bin"
 // doesn't close the files when they reach the end
 // doesn't delete the old tables
+// if the compaction makes an empty table, delete the opened file (this is checked using lastElement)
 func MergeTables(filesArg []*os.File, newFilePath string) {
 	files := make([]*os.File, len(filesArg))
 	copy(files, filesArg)
@@ -272,17 +297,12 @@ func MergeTables(filesArg []*os.File, newFilePath string) {
 	var minimumIndex int                        //index of the file with the current smallest entry
 	var tableLimits []uint64 = getLimits(files) //array of limits for all files
 	var filesBlockOffsets []uint64 = make([]uint64, len(files))
-	var dataToWrite []byte //data that will be written after reaching a byte threshold (block size)
-	var newFileBlockOffset uint64
+
 	var tracker *Tracker
+	defineTracker(newFilePath, tracker)
 	var counter int = 0 // tracks the current file in the array of files it should compare minimum entry with
 
-	newFile, err := os.OpenFile(newFilePath, os.O_CREATE, 0664)
-	if err != nil {
-		panic(err)
-	}
-	defer newFile.Close()
-
+	var err error
 	//iterates through all file entries until there are no files to read
 	for len(entryArrays) != 0 {
 		//finds the smallest entry
@@ -326,7 +346,8 @@ func MergeTables(filesArg []*os.File, newFilePath string) {
 		if minimumEntry != nil {
 			if !minimumEntry.tombstone {
 				serializedEntry := SerializeEntry(minimumEntry)
-				flushIfFull(tracker, serializedEntry)
+				tracker.summaryTracker.lastEntry = minimumEntry
+				flushDataIfFull(tracker, serializedEntry)
 			}
 			//pops first element of the slice in O(1) time because slices are cool
 			//the first element represents the current smallest key in all tables
@@ -335,7 +356,14 @@ func MergeTables(filesArg []*os.File, newFilePath string) {
 			counter = 0
 		}
 
+		//if there is no last entry, that means there are no valid entries at all so
+		//the file should just get deleted
+		if tracker.summaryTracker.lastEntry == nil {
+			os.Remove(newFilePath)
+			return
+		}
 	}
+
 }
 
 // Takes the tracker that tracks all data to write and offsets of their blocks as well as the
@@ -343,20 +371,21 @@ func MergeTables(filesArg []*os.File, newFilePath string) {
 // and the data that is to be appended to tracker data
 //
 // If the serialized entry can't fit into array, empty out the array and then check if it can fit.
-// If it still can't fit flush it directly onto the disk.
-// If the array is already empty, directly flush entry to disk.
+// If the array is already empty, but the entry can't fit, directly flush entry to disk.
+//
 // If the serialized entry can fit, just append.
-func flushIfFull(tracker *Tracker, serializedEntry []byte) {
-	dataArray := tracker.dataData
-	dataFile := files[0]
-	if len(dataArray)+len(serializedEntry) > config.GlobalBlockSize {
+func flushDataIfFull(tracker *Tracker, serializedEntry []byte) {
+	dataArray := tracker.dataTracker.data
+	blockHeaderSize := 9
+	dataSpace := config.GlobalBlockSize - blockHeaderSize
+	if len(dataArray)+len(serializedEntry) > dataSpace {
 		if len(dataArray) == 0 {
-			flushBytes(serializedEntry, offset, file)
+			flushDataBytes(serializedEntry, tracker)
 		} else {
-			offset = flushBytes(dataArray, offset, file)
+			flushDataBytes(dataArray, tracker)
 			dataArray = dataArray[:0]
 			if len(serializedEntry) > config.GlobalBlockSize {
-				offset = flushBytes(serializedEntry, offset, file)
+				flushDataBytes(serializedEntry, tracker)
 			} else {
 				dataArray = append(dataArray, serializedEntry...)
 			}
@@ -364,42 +393,202 @@ func flushIfFull(tracker *Tracker, serializedEntry []byte) {
 	} else {
 		dataArray = append(dataArray, serializedEntry...)
 	}
+	tracker.dataTracker.data = dataArray //prilikom append operacije se pravi novi slice pa mora da se data pointer izmeni
 }
 
-func flushBytes(array []byte, offset uint64, file *os.File) uint64 {
-	for channelResult := range PrepareSSTableBlocks(file.Name(), array, true, offset, false) {
-		blockManager.WriteBlock(file, channelResult.Block)
-		offset += 1
+// array is the serialized entry that is flushed to disk
+// this function fills indexData of tracker if sparsity is correct and if the block
+// is type full or type first which is checked with lastKey and newKey
+func flushDataBytes(array []byte, tracker *Tracker) {
+	file := tracker.dataTracker.file
+	offset := tracker.dataTracker.offset
+	var lastKey []byte = nil
+	for channelResult := range PrepareSSTableBlocks(file.Name(), array, true, *offset, false) {
+		block := channelResult.Block
+		newKey := channelResult.Key
+		blockManager.WriteBlock(file, block)
+		if !bytes.Equal(lastKey, newKey) {
+			lastKey = newKey
+			if config.Compress {
+				tracker.indexTracker.data = binary.AppendUvarint(tracker.indexTracker.data, uint64(len(newKey)))
+			} else {
+				tracker.indexTracker.data = binary.LittleEndian.AppendUint64(tracker.indexTracker.data, uint64(len(newKey)))
+			}
+			tracker.indexTracker.data = append(tracker.indexTracker.data, newKey...)
+		}
+		*offset += 1
 	}
-	return offset
 }
 
 // | CRC 4B | TimeStamp 8B | Tombstone 1B | Keysize 8B | Valuesize 8B | Key... | Value... |
 func SerializeEntry(entry *Entry) []byte {
-	headerSize := 0
+	if config.Compress {
+		return serializeEntryCompressed(entry)
+	} else {
+		return serializeEntryNonCompressed(entry)
+	}
+}
 
+func serializeEntryCompressed(entry *Entry) []byte {
+	serializedData := make([]byte, 0)
+	serializedData = binary.LittleEndian.AppendUint32(serializedData, entry.crc)
+	serializedData = binary.AppendUvarint(serializedData, entry.timeStamp)
 	if entry.tombstone {
-		headerSize = 21
+		serializedData = append(serializedData, byte(1))
 	} else {
-		headerSize = 29
+		serializedData = append(serializedData, byte(0))
+	}
+	serializedData = binary.AppendUvarint(serializedData, uint64(len(entry.key)))
+	serializedData = binary.AppendUvarint(serializedData, uint64(len(entry.value)))
+	serializedData = append(serializedData, entry.key...)
+	serializedData = append(serializedData, entry.value...)
+
+	return serializedData
+}
+
+func serializeEntryNonCompressed(entry *Entry) []byte {
+	serializedData := make([]byte, 0)
+	serializedData = binary.LittleEndian.AppendUint32(serializedData, entry.crc)
+	serializedData = binary.LittleEndian.AppendUint64(serializedData, entry.timeStamp)
+	if entry.tombstone {
+		serializedData = append(serializedData, 1)
+	} else {
+		serializedData = append(serializedData, 0)
+	}
+	serializedData = binary.LittleEndian.AppendUint64(serializedData, uint64(len(entry.key)))
+	serializedData = binary.LittleEndian.AppendUint64(serializedData, uint64(len(entry.value)))
+	serializedData = append(serializedData, entry.key...)
+	serializedData = append(serializedData, entry.value...)
+	return serializedData
+}
+
+// Adds pointers for correct file paths to tracker
+func defineTracker(newFilePath string, tracker *Tracker) {
+	if len(newFilePath) < 11 {
+		panic("new file path is too short")
+	}
+	if !strings.HasSuffix(newFilePath, "compact.bin") || !strings.HasSuffix(newFilePath, "data.bin") {
+		panic("new file path doesn't have correct suffix")
 	}
 
-	data := make([]byte, headerSize+len(entry.key)+len(entry.value))
-
-	binary.BigEndian.PutUint64(data[4:12], entry.timeStamp)
-
-	copy(data[headerSize:], entry.key)
-
-	binary.BigEndian.PutUint64(data[13:21], uint64(len(entry.key)))
-	if !entry.tombstone {
-		data[12] = 0
-		binary.BigEndian.PutUint64(data[21:29], uint64(len(entry.value)))
-		copy(data[headerSize+len(entry.key):], entry.value)
+	if strings.HasSuffix(newFilePath, "compact.bin") {
+		defineTrackerCompact(newFilePath, tracker)
+	} else if strings.HasSuffix(newFilePath, "data.bin") {
+		defineTrackerSeparate(newFilePath, tracker)
 	} else {
-		data[12] = 1
+		panic("the suffix for data file is not correct")
+	}
+}
+
+// Creates pointers for adequate files and pointers to adequate numbers
+func defineTrackerSeparate(newFilePath string, tracker *Tracker) {
+	filePrefix := newFilePath[len(newFilePath)-len("data.bin"):]
+	newFileData, err := os.OpenFile(newFilePath, os.O_CREATE, 0664)
+	if err != nil {
+		panic(err)
+	}
+	defer newFileData.Close()
+	newFileIndex, err := os.OpenFile(filePrefix+"index.bin", os.O_CREATE, 0664)
+	if err != nil {
+		panic(err)
+	}
+	defer newFileIndex.Close()
+	newFileSummary, err := os.OpenFile(filePrefix+"summary.bin", os.O_CREATE, 0664)
+	if err != nil {
+		panic(err)
+	}
+	defer newFileSummary.Close()
+
+	tracker.dataTracker.file = newFileData
+	tracker.indexTracker.file = newFileIndex
+	tracker.summaryTracker.file = newFileSummary
+
+	tracker.dataTracker.offset = new(uint64)
+	tracker.indexTracker.offset = new(uint64)
+	tracker.summaryTracker.offset = new(uint64)
+	*tracker.dataTracker.offset = 0
+	*tracker.indexTracker.offset = 0
+	*tracker.summaryTracker.offset = 0
+}
+
+// Makes all tracker file pointers point at the same file and indexes at the same number
+func defineTrackerCompact(newFilePath string, tracker *Tracker) {
+	newFile, err := os.OpenFile(newFilePath, os.O_CREATE, 0664)
+	if err != nil {
+		panic(err)
+	}
+	defer newFile.Close()
+	tracker.dataTracker.file = newFile
+	tracker.indexTracker.file = newFile
+	tracker.summaryTracker.file = newFile
+
+	tracker.dataTracker.offset = new(uint64)
+	*tracker.dataTracker.offset = 0
+	tracker.indexTracker.offset = tracker.dataTracker.offset
+	tracker.summaryTracker.offset = tracker.dataTracker.offset
+}
+
+func flushIndexBytes(tracker *Tracker) {
+	array := tracker.indexTracker.data
+	file := tracker.dataTracker.file
+	offset := tracker.dataTracker.offset
+	var lastKey []byte = nil
+	for channelResult := range PrepareSSTableBlocks(file.Name(), array, true, *offset, false) {
+		block := channelResult.Block
+		newKey := channelResult.Key
+		blockManager.WriteBlock(file, block)
+		if !bytes.Equal(lastKey, newKey) {
+			lastKey = newKey
+			if config.Compress {
+				tracker.summaryTracker.data = binary.AppendUvarint(tracker.summaryTracker.data, uint64(len(newKey)))
+			} else {
+				tracker.summaryTracker.data = binary.LittleEndian.AppendUint64(tracker.summaryTracker.data, uint64(len(newKey)))
+			}
+			tracker.summaryTracker.data = append(tracker.summaryTracker.data, newKey...)
+		}
+		*offset += 1
+	}
+}
+
+// Takes []byte where the first bytes should represent an entry header
+// If compression is on, the header size of the entry is variable
+// If compression is not on, the header size is fixed
+// CRC and tombstone are always fixed to 4 bytes and 1 byte
+// timestamp, keysize and valuesize are dynamic
+func findHeaderSizes(array []byte) *Header {
+	header := new(Header)
+	headerPointer := 0
+	if config.Compress {
+		header.crcBytes = 4
+		headerPointer += header.crcBytes
+
+		_, header.timeStampBytes = binary.Uvarint(array[headerPointer:])
+		if header.timeStampBytes == 0 {
+			panic("decoding failed")
+		}
+		headerPointer += header.timeStampBytes
+
+		header.tombstoneBytes = 1
+		headerPointer += header.tombstoneBytes
+
+		_, header.keySizeBytes = binary.Uvarint((array[headerPointer:]))
+		if header.keySizeBytes == 0 {
+			panic("decoding failed")
+		}
+		headerPointer += header.keySizeBytes
+
+		_, header.valueSizeBytes = binary.Uvarint((array[headerPointer:]))
+		if header.valueSizeBytes == 0 {
+			panic("decoding failed")
+		}
+
+	} else {
+		header.crcBytes = 4
+		header.timeStampBytes = 8
+		header.tombstoneBytes = 1
+		header.keySizeBytes = 8
+		header.valueSizeBytes = 8
 	}
 
-	binary.BigEndian.PutUint32(data[0:4], crc32.ChecksumIEEE(data[4:]))
-
-	return data
+	return header
 }

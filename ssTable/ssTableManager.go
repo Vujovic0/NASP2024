@@ -35,6 +35,7 @@ type channelResult struct {
 // If entry has tombstone 1, the entry MUST NOT have valueSize and value
 // Returns block per block as well as the first key in the block in bytes
 
+// boze me sacuvaj, prljavog li koda
 func PrepareSSTableBlocks(filePath string, data []byte, dataBlocksCheck bool, blockOffset uint64, firstSummaryBlock bool) <-chan *channelResult {
 	ch := make(chan *channelResult)
 
@@ -45,15 +46,16 @@ func PrepareSSTableBlocks(filePath string, data []byte, dataBlocksCheck bool, bl
 			keySizeOffset = 13
 		}
 
-		if dataBlocksCheck {
-			if len(data) < keySizeOffset+16 {
-				panic("Invalid data")
-			}
-		}
+		// if dataBlocksCheck {
+		// 	if len(data) < keySizeOffset+16 {
+		// 		panic("Invalid data")
+		// 	}
+		// }
 
 		var dataPointer uint64 = 0
 		//skips the header of the block |CRC 4B|Type 1B|Data size 4B|
-		blockPointer := 9
+		blockHeader := uint64(9)
+		blockPointer := blockHeader
 		blockData := make([]byte, blockSize)
 
 		var crcValue uint32 = 0
@@ -71,18 +73,23 @@ func PrepareSSTableBlocks(filePath string, data []byte, dataBlocksCheck bool, bl
 
 		for dataPointer < uint64(len(data)) {
 
+			//checks how many bytes header takes up, and what type of entry is being read
+			//aka if it's a data entry, other type of entry or boundary entry
 			if newEntryCheck {
-				entryKeySize = binary.BigEndian.Uint64(data[dataPointer+uint64(keySizeOffset) : dataPointer+uint64(keySizeOffset)+8])
+				entryKeySize = binary.LittleEndian.Uint64(data[dataPointer+uint64(keySizeOffset) : dataPointer+uint64(keySizeOffset)+8])
 				//dataPointer+12 represents the tombstone byte only in data segments, not index or summary
 				if dataBlocksCheck {
+					//if tombstone is true skip valuesize and value
 					if data[dataPointer+12] == 1 {
 						entryValueSize = 0
 						entryHeaderSize = keySizeOffset + 8
 					} else {
-						entryValueSize = binary.BigEndian.Uint64(data[dataPointer+uint64(keySizeOffset)+8 : dataPointer+uint64(keySizeOffset)+16])
+						entryValueSize = binary.LittleEndian.Uint64(data[dataPointer+uint64(keySizeOffset)+8 : dataPointer+uint64(keySizeOffset)+16])
 						entryHeaderSize = keySizeOffset + 16
 					}
 				} else {
+					//checks if the block represents the boundary of the entire sstable
+					//if so, the value is left out because the boundary is only the key
 					if firstSummaryBlock {
 						entryValueSize = 0
 						firstSummaryBlock = false
@@ -91,40 +98,44 @@ func PrepareSSTableBlocks(filePath string, data []byte, dataBlocksCheck bool, bl
 					}
 					entryHeaderSize = 8
 				}
+				//calculates how many bytes the entry should take up
 				entrySize = entryKeySize + entryValueSize + uint64(entryHeaderSize)
 				entrySizeLeft = entrySize
+				//if this is the first block aka type 0 or type 1 the key is saved for easier use
+				//during creating of index and summary
 				if newBlockCheck {
 					key = data[dataPointer+uint64(entryHeaderSize) : dataPointer+uint64(entryHeaderSize)+entryKeySize]
 					newBlockCheck = false
 				}
 			}
 
-			if blockSize-uint64(blockPointer) >= entrySize {
+			//checks if entry can fit into the empty space of the block
+			if blockSize-blockPointer >= entrySize {
 				copy(blockData[blockPointer:], data[dataPointer:uint64(dataPointer)+entrySize])
 				dataPointer += entrySize
-				blockPointer += int(entrySize)
+				blockPointer += entrySize
 				if dataPointer == uint64(len(data)) {
 					blockType = 0
 
 					blockData[4] = blockType
-					binary.BigEndian.PutUint32(blockData[5:9], uint32(blockPointer-9))
+					binary.LittleEndian.PutUint32(blockData[5:9], uint32(blockPointer-9))
 
 					crcValue = crc32.ChecksumIEEE(blockData[4:])
-					binary.BigEndian.PutUint32(blockData[0:4], crcValue)
+					binary.LittleEndian.PutUint32(blockData[0:4], crcValue)
 
 					block = blockManager.InitBlock(filePath, blockOffset, blockData)
 					ch <- &channelResult{Block: block, Key: key}
 					break
 				}
 				continue
-			} else if blockPointer != 9 {
+			} else if blockPointer != blockHeader {
 				blockType = 0
 
 				blockData[4] = blockType
-				binary.BigEndian.PutUint32(blockData[5:9], uint32(blockPointer-9))
+				binary.LittleEndian.PutUint32(blockData[5:9], uint32(blockPointer-blockHeader))
 
 				crcValue = crc32.ChecksumIEEE(blockData[4:])
-				binary.BigEndian.PutUint32(blockData[0:4], crcValue)
+				binary.LittleEndian.PutUint32(blockData[0:4], crcValue)
 
 				block = blockManager.InitBlock(filePath, blockOffset, blockData)
 			} else {
@@ -139,30 +150,30 @@ func PrepareSSTableBlocks(filePath string, data []byte, dataBlocksCheck bool, bl
 
 					blockData[4] = blockType
 					copy(blockData[9:], data[dataPointer:uint64(dataPointer)+entrySizeLeft])
-					binary.BigEndian.PutUint32(blockData[5:9], uint32(entrySizeLeft))
+					binary.LittleEndian.PutUint32(blockData[5:9], uint32(entrySizeLeft))
 
 					crcValue = crc32.ChecksumIEEE(blockData[4:])
-					binary.BigEndian.PutUint32(blockData[0:4], crcValue)
+					binary.LittleEndian.PutUint32(blockData[0:4], crcValue)
 
 					block = blockManager.InitBlock(filePath, blockOffset, blockData)
 					newEntryCheck = true
 					dataPointer += entrySizeLeft
 				} else {
-					entrySizeLeft -= uint64(blockSize - 9)
+					entrySizeLeft -= uint64(blockSize - blockHeader)
 
-					binary.BigEndian.PutUint32(blockData[5:9], uint32(blockSize-9))
+					binary.LittleEndian.PutUint32(blockData[5:9], uint32(blockSize-9))
 					blockData[4] = blockType
 					copy(blockData[9:], data[dataPointer:uint64(dataPointer)+uint64(blockSize-9)])
 
 					crcValue = crc32.ChecksumIEEE(blockData[4:])
-					binary.BigEndian.PutUint32(blockData[0:4], crcValue)
+					binary.LittleEndian.PutUint32(blockData[0:4], crcValue)
 
 					dataPointer += uint64(blockSize - 9)
 					block = blockManager.InitBlock(filePath, blockOffset, blockData)
 				}
 			}
 			blockData = make([]byte, blockSize)
-			blockPointer = 9
+			blockPointer = blockHeader
 			blockOffset += 1
 			ch <- &channelResult{Block: block, Key: key}
 			newBlockCheck = true
@@ -191,17 +202,17 @@ func getGeneration(increment bool) uint64 {
 	var block *blockManager.Block
 	if fileExists {
 		block = blockManager.ReadBlock(metaFile, 0)
-		generation = binary.BigEndian.Uint64(block.GetData()[9:17])
+		generation = binary.LittleEndian.Uint64(block.GetData()[9:17])
 	} else {
 		generation = 0
 	}
 	if increment {
 		generation += 1
 		dataPlaceholder := make([]byte, blockSize)
-		binary.BigEndian.PutUint32(dataPlaceholder[5:9], 8)
-		binary.BigEndian.PutUint64(dataPlaceholder[9:17], generation)
+		binary.LittleEndian.PutUint32(dataPlaceholder[5:9], 8)
+		binary.LittleEndian.PutUint64(dataPlaceholder[9:17], generation)
 		crcValue := crc32.ChecksumIEEE(dataPlaceholder[4:])
-		binary.BigEndian.PutUint32(dataPlaceholder[:4], crcValue)
+		binary.LittleEndian.PutUint32(dataPlaceholder[:4], crcValue)
 		block = blockManager.InitBlock("metaData.bin", 0, dataPlaceholder)
 		blockManager.WriteBlock(metaFile, block)
 	}
@@ -241,7 +252,7 @@ func getKeysType0(block *blockManager.Block, dataBlockCheck bool, summaryBound u
 		if blockPointer+8 > dataSize {
 			return nil, nil, errors.New("the block is corrupted")
 		}
-		keySize := binary.BigEndian.Uint64(blockData[blockPointer : blockPointer+8])
+		keySize := binary.LittleEndian.Uint64(blockData[blockPointer : blockPointer+8])
 		blockPointer += 8
 		if !firstSummaryBlock {
 			if blockPointer+8 > dataSize {
@@ -252,7 +263,7 @@ func getKeysType0(block *blockManager.Block, dataBlockCheck bool, summaryBound u
 			valueSize = 0
 		} else {
 			if dataBlockCheck {
-				valueSize = binary.BigEndian.Uint64(blockData[blockPointer : blockPointer+8])
+				valueSize = binary.LittleEndian.Uint64(blockData[blockPointer : blockPointer+8])
 				blockPointer += 8
 			} else {
 				valueSize = 8
@@ -307,7 +318,7 @@ func getKeysType1(block *blockManager.Block, dataBlockCheck bool, summaryBound u
 	if blockPointer+8 > dataSize {
 		return nil, nil, 0, 0, errors.New("the block is corrupted")
 	}
-	keySize := binary.BigEndian.Uint64(blockData[blockPointer : blockPointer+8])
+	keySize := binary.LittleEndian.Uint64(blockData[blockPointer : blockPointer+8])
 	blockPointer += 8
 	if !firstSummaryBlock {
 		if dataBlockCheck {
@@ -322,7 +333,7 @@ func getKeysType1(block *blockManager.Block, dataBlockCheck bool, summaryBound u
 	}
 	if !tombstone {
 		if dataBlockCheck {
-			valueSize = binary.BigEndian.Uint64(blockData[blockPointer : blockPointer+8])
+			valueSize = binary.LittleEndian.Uint64(blockData[blockPointer : blockPointer+8])
 			blockPointer += 8
 		} else {
 			valueSize = 8
@@ -472,8 +483,8 @@ func CreateCompactSSTable(data []byte, lastElementData []byte, summary_sparsity 
 		if !bytes.Equal(keyBinary, channelResult.Key) {
 			if counter%index_sparsity == 0 {
 				keyBinary = channelResult.Key
-				binary.BigEndian.PutUint64(keySizeBinary, uint64(len(keyBinary)))
-				binary.BigEndian.PutUint64(valueBinary, uint64(channelResult.Block.GetOffset()))
+				binary.LittleEndian.PutUint64(keySizeBinary, uint64(len(keyBinary)))
+				binary.LittleEndian.PutUint64(valueBinary, uint64(channelResult.Block.GetOffset()))
 				indexData = append(indexData, keySizeBinary...)
 				indexData = append(indexData, keyBinary...)
 				indexData = append(indexData, valueBinary...)
@@ -493,8 +504,8 @@ func CreateCompactSSTable(data []byte, lastElementData []byte, summary_sparsity 
 		if !bytes.Equal(keyBinary, channelResult.Key) {
 			if counter%summary_sparsity == 0 {
 				keyBinary = channelResult.Key
-				binary.BigEndian.PutUint64(keySizeBinary, uint64(len(keyBinary)))
-				binary.BigEndian.PutUint64(valueBinary, uint64(channelResult.Block.GetOffset()))
+				binary.LittleEndian.PutUint64(keySizeBinary, uint64(len(keyBinary)))
+				binary.LittleEndian.PutUint64(valueBinary, uint64(channelResult.Block.GetOffset()))
 				summaryData = append(summaryData, keySizeBinary...)
 				summaryData = append(summaryData, keyBinary...)
 				summaryData = append(summaryData, valueBinary...)
@@ -522,16 +533,16 @@ func CreateCompactSSTable(data []byte, lastElementData []byte, summary_sparsity 
 
 	var footerData []byte = make([]byte, 0)
 
-	footerData = binary.BigEndian.AppendUint64(footerData, indexStart)
-	footerData = binary.BigEndian.AppendUint64(footerData, summaryStart)
-	footerData = binary.BigEndian.AppendUint64(footerData, footerStart)
-	footerData = binary.BigEndian.AppendUint64(footerData, boundStart)
+	footerData = binary.LittleEndian.AppendUint64(footerData, indexStart)
+	footerData = binary.LittleEndian.AppendUint64(footerData, summaryStart)
+	footerData = binary.LittleEndian.AppendUint64(footerData, footerStart)
+	footerData = binary.LittleEndian.AppendUint64(footerData, boundStart)
 
 	var blockData []byte = make([]byte, blockSize)
 	copy(blockData[9:], footerData)
 	blockData[4] = 0
-	binary.BigEndian.PutUint32(blockData[0:4], crc32.ChecksumIEEE(blockData[4:]))
-	binary.BigEndian.PutUint32(blockData[5:9], uint32(len(footerData)))
+	binary.LittleEndian.PutUint32(blockData[0:4], crc32.ChecksumIEEE(blockData[4:]))
+	binary.LittleEndian.PutUint32(blockData[5:9], uint32(len(footerData)))
 
 	block := blockManager.InitBlock(fileName, blockCounter, blockData)
 	blockManager.WriteBlock(file, block)
@@ -591,8 +602,8 @@ func CreateSeparatedSSTable(data []byte, lastElementData []byte, summary_sparsit
 		if !bytes.Equal(keyBinary, channelResult.Key) {
 			if counter%uint64(index_sparsity) == 0 {
 				keyBinary = channelResult.Key
-				binary.BigEndian.PutUint64(keySizeBinary, uint64(len(keyBinary)))
-				binary.BigEndian.PutUint64(valueBinary, uint64(channelResult.Block.GetOffset()))
+				binary.LittleEndian.PutUint64(keySizeBinary, uint64(len(keyBinary)))
+				binary.LittleEndian.PutUint64(valueBinary, uint64(channelResult.Block.GetOffset()))
 				indexData = append(indexData, keySizeBinary...)
 				indexData = append(indexData, keyBinary...)
 				indexData = append(indexData, valueBinary...)
@@ -610,8 +621,8 @@ func CreateSeparatedSSTable(data []byte, lastElementData []byte, summary_sparsit
 		if !bytes.Equal(keyBinary, channelResult.Key) {
 			if counter%uint64(summary_sparsity) == 0 {
 				keyBinary = channelResult.Key
-				binary.BigEndian.PutUint64(keySizeBinary, uint64(len(keyBinary)))
-				binary.BigEndian.PutUint64(valueBinary, uint64(channelResult.Block.GetOffset()))
+				binary.LittleEndian.PutUint64(keySizeBinary, uint64(len(keyBinary)))
+				binary.LittleEndian.PutUint64(valueBinary, uint64(channelResult.Block.GetOffset()))
 				summaryData = append(summaryData, keySizeBinary...)
 				summaryData = append(summaryData, keyBinary...)
 				summaryData = append(summaryData, valueBinary...)
@@ -638,14 +649,14 @@ func CreateSeparatedSSTable(data []byte, lastElementData []byte, summary_sparsit
 
 	var footerData []byte = make([]byte, 0)
 
-	footerData = binary.BigEndian.AppendUint64(footerData, uint64(footerStart))
-	footerData = binary.BigEndian.AppendUint64(footerData, uint64(boundStart))
+	footerData = binary.LittleEndian.AppendUint64(footerData, uint64(footerStart))
+	footerData = binary.LittleEndian.AppendUint64(footerData, uint64(boundStart))
 
 	var blockData []byte = make([]byte, config.GlobalBlockSize)
 	copy(blockData[9:], footerData)
 	blockData[4] = 0
-	binary.BigEndian.PutUint32(blockData[0:4], crc32.ChecksumIEEE(blockData[4:]))
-	binary.BigEndian.PutUint32(blockData[5:9], uint32(len(footerData)))
+	binary.LittleEndian.PutUint32(blockData[0:4], crc32.ChecksumIEEE(blockData[4:]))
+	binary.LittleEndian.PutUint32(blockData[5:9], uint32(len(footerData)))
 
 	block := blockManager.InitBlock(fileName, counter, blockData)
 	blockManager.WriteBlock(fileSummary, block)
@@ -673,9 +684,9 @@ func findCompact(filePath string, key []byte) ([]byte, error) {
 
 	footerBlock := blockManager.ReadBlock(file, uint64(fileInfo.Size())/blockSize-1)
 	footerData := footerBlock.GetData()
-	indexStart = binary.BigEndian.Uint64(footerData[9:17])
-	summaryStart = binary.BigEndian.Uint64(footerData[17:25])
-	footerStart = binary.BigEndian.Uint64(footerData[25:33])
+	indexStart = binary.LittleEndian.Uint64(footerData[9:17])
+	summaryStart = binary.LittleEndian.Uint64(footerData[17:25])
+	footerStart = binary.LittleEndian.Uint64(footerData[25:33])
 	maximumBound, err := getMaximumBound(file)
 	boundIndex := getBoundIndex(file)
 	if err != nil {
@@ -727,7 +738,7 @@ func findCompact(filePath string, key []byte) ([]byte, error) {
 					continue
 				}
 				currentSection += 1
-				blockOffset = binary.BigEndian.Uint64(values[len(values)-1])
+				blockOffset = binary.LittleEndian.Uint64(values[len(values)-1])
 				continue
 			} else if index == -2 {
 				if dataBlockCheck {
@@ -736,7 +747,7 @@ func findCompact(filePath string, key []byte) ([]byte, error) {
 				if lastValue == nil {
 					return nil, nil
 				}
-				blockOffset = binary.BigEndian.Uint64(lastValue)
+				blockOffset = binary.LittleEndian.Uint64(lastValue)
 				currentSection += 1
 				lastValue = nil
 				continue
@@ -744,7 +755,7 @@ func findCompact(filePath string, key []byte) ([]byte, error) {
 				return values[index], nil
 			}
 
-			blockOffset = binary.BigEndian.Uint64(values[index])
+			blockOffset = binary.LittleEndian.Uint64(values[index])
 			currentSection += 1
 			lastValue = nil
 			continue
@@ -786,7 +797,7 @@ func findCompact(filePath string, key []byte) ([]byte, error) {
 				if dataBlockCheck {
 					return valueBytes, nil
 				}
-				blockOffset = binary.BigEndian.Uint64(valueBytes)
+				blockOffset = binary.LittleEndian.Uint64(valueBytes)
 				currentSection += 1
 
 				lastValue = nil
@@ -803,7 +814,7 @@ func findCompact(filePath string, key []byte) ([]byte, error) {
 				if lastValue == nil {
 					return nil, nil
 				}
-				blockOffset = binary.BigEndian.Uint64(lastValue)
+				blockOffset = binary.LittleEndian.Uint64(lastValue)
 				currentSection += 1
 
 				lastValue = nil
@@ -959,7 +970,7 @@ func SerializeKeyValue(key string, value string, tombstone bool, keyOnlyCheck bo
 	var dataBytes []byte
 	if keyOnlyCheck {
 		dataBytes = make([]byte, 8+keySize)
-		binary.BigEndian.PutUint64(dataBytes[0:8], uint64(keySize))
+		binary.LittleEndian.PutUint64(dataBytes[0:8], uint64(keySize))
 		copy(dataBytes[8:], keyBytes)
 		return dataBytes
 	}
@@ -971,20 +982,20 @@ func SerializeKeyValue(key string, value string, tombstone bool, keyOnlyCheck bo
 		sizeReserve -= valueSize + 8
 	}
 	dataBytes = make([]byte, sizeReserve)
-	binary.BigEndian.PutUint64(dataBytes[4:12], uint64(timestamp))
+	binary.LittleEndian.PutUint64(dataBytes[4:12], uint64(timestamp))
 	if tombstone {
 		dataBytes[12] = 1
 	}
-	binary.BigEndian.PutUint64(dataBytes[13:21], uint64(keySize))
+	binary.LittleEndian.PutUint64(dataBytes[13:21], uint64(keySize))
 	if !tombstone {
-		binary.BigEndian.PutUint64(dataBytes[21:29], uint64(valueSize))
+		binary.LittleEndian.PutUint64(dataBytes[21:29], uint64(valueSize))
 		copy(dataBytes[29+keySize:], valueBytes)
 		copy(dataBytes[29:29+keySize], keyBytes)
 	} else {
 		copy(dataBytes[21:21+keySize], keyBytes)
 	}
 	crc := crc32.ChecksumIEEE(dataBytes[4:])
-	binary.BigEndian.PutUint32(dataBytes[:4], crc)
+	binary.LittleEndian.PutUint32(dataBytes[:4], crc)
 	return dataBytes
 }
 
@@ -1027,14 +1038,14 @@ func Find(key []byte) []byte {
 				panic(err)
 			}
 			fileName = "usertable-" + genStr + "-index.bin"
-			offset = binary.BigEndian.Uint64(valueBytes)
+			offset = binary.LittleEndian.Uint64(valueBytes)
 			valueBytes, err = findSeparated(files[fileName], key, offset)
 			if err != nil {
 				panic(err)
 			}
 
 			fileName = "usertable-" + genStr + "-data.bin"
-			offset = binary.BigEndian.Uint64(valueBytes)
+			offset = binary.LittleEndian.Uint64(valueBytes)
 			valueBytes, err = findSeparated(files[fileName], key, offset)
 			if err != nil {
 				panic(err)
@@ -1070,7 +1081,7 @@ func getMaximumBound(summaryFile *os.File) ([]byte, error) {
 	}
 	data := fetchData(block)
 	keySizeBytes := data[:8]
-	keySize := binary.BigEndian.Uint64(keySizeBytes)
+	keySize := binary.LittleEndian.Uint64(keySizeBytes)
 	keyBytes := data[8 : 8+keySize] // key value of the last element
 	boundStart += 1
 	if block.GetType() == 0 {
@@ -1094,7 +1105,7 @@ func fetchData(block *blockManager.Block) []byte {
 	blockData := block.GetData()
 	blockHeader := 9
 	dataSizeBytes := blockData[5 : 5+4]
-	dataSize := binary.BigEndian.Uint32(dataSizeBytes)
+	dataSize := binary.LittleEndian.Uint32(dataSizeBytes)
 	data := blockData[blockHeader : blockHeader+int(dataSize)]
 	return data
 }
@@ -1117,13 +1128,17 @@ func getBoundIndex(file *os.File) uint64 {
 		if len(data) < 8*4 {
 			panic("footer doesn't have all indices")
 		}
-		return binary.BigEndian.Uint64(data[8*3 : 8*4])
+		return binary.LittleEndian.Uint64(data[8*3 : 8*4])
 	case strings.HasSuffix(fileName, "summary.bin"):
 		if len(data) < 8*2 {
 			panic("footer doesn't have all indices")
 		}
-		return binary.BigEndian.Uint64(data[8*1 : 8*2])
+		return binary.LittleEndian.Uint64(data[8*1 : 8*2])
 	default:
 		panic("file doesn't have footer")
 	}
+}
+
+func getCompressedKeySize(byteStream [32]byte) {
+
 }
