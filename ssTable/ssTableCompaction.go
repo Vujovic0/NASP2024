@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"hash/crc32"
 	"os"
 	"slices"
 	"strings"
@@ -271,12 +272,14 @@ func getLimits(files []*os.File) []uint64 {
 		fileName := file.Name()
 		fileInfo, _ := file.Stat()
 		lastBlockOffset := uint64(fileInfo.Size())/uint64(config.GlobalBlockSize) - 1
-		if fileName[len(fileName)-11:] == "compact.bin" {
+		if strings.HasSuffix(fileName, "compact.bin") {
 
 			lastBlock := blockManager.ReadBlock(file, lastBlockOffset)
 			fileLimitBytes := lastBlock.GetData()[9 : 9+8]
 			fileLimit := binary.LittleEndian.Uint64(fileLimitBytes)
 			tableLimits[index] = fileLimit
+		} else if strings.HasSuffix(fileName, "summary.bin") {
+
 		} else {
 			tableLimits[index] = lastBlockOffset + 1
 		}
@@ -291,7 +294,7 @@ func getLimits(files []*os.File) []uint64 {
 // if the compaction makes an empty table, delete the opened file (this is checked using lastElement)
 func MergeTables(filesArg []*os.File, newFilePath string) {
 	files := make([]*os.File, len(filesArg))
-	copy(files, filesArg)
+	copy(files, filesArg)                                     //copies so the filesArg isn't updated while this function is running
 	var entryArrays [][]*Entry = make([][]*Entry, len(files)) //entries for each iteration of block read are put here
 	var minimumEntry *Entry
 	var minimumIndex int                        //index of the file with the current smallest entry
@@ -548,6 +551,44 @@ func flushIndexBytes(tracker *Tracker) {
 		}
 		*offset += 1
 	}
+}
+
+func flushSummaryBytes(tracker *Tracker) {
+	array := tracker.summaryTracker.data
+	file := tracker.dataTracker.file
+	offset := tracker.dataTracker.offset
+	for channelResult := range PrepareSSTableBlocks(file.Name(), array, true, *offset, false) {
+		block := channelResult.Block
+		blockManager.WriteBlock(file, block)
+		*offset += 1
+	}
+
+	lastEntry := tracker.summaryTracker.lastEntry
+	lastEntryData := SerializeEntry(lastEntry)
+
+	boundStart := *offset
+
+	for channelResult := range PrepareSSTableBlocks(file.Name(), lastEntryData, true, *offset, true) {
+		block := channelResult.Block
+		blockManager.WriteBlock(file, block)
+		*offset += 1
+	}
+
+	footerStart := *offset
+
+	var footerData []byte = make([]byte, 0)
+
+	footerData = binary.LittleEndian.AppendUint64(footerData, uint64(footerStart))
+	footerData = binary.LittleEndian.AppendUint64(footerData, uint64(boundStart))
+
+	var blockData []byte = make([]byte, config.GlobalBlockSize)
+	copy(blockData[9:], footerData)
+	blockData[4] = 0
+	binary.LittleEndian.PutUint32(blockData[0:4], crc32.ChecksumIEEE(blockData[4:]))
+	binary.LittleEndian.PutUint32(blockData[5:9], uint32(len(footerData)))
+
+	block := blockManager.InitBlock(tracker.summaryTracker.file.Name(), *offset, blockData)
+	blockManager.WriteBlock(tracker.summaryTracker.file, block)
 }
 
 // Takes []byte where the first bytes should represent an entry header
