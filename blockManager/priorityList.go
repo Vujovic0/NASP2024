@@ -52,6 +52,8 @@ type priorityList[T any] struct {
 	head *Node[T]
 }
 
+//For some reason head and tail are flipped but I don't care enough to fix it because it works
+//Nodes are added at tail and removed at head
 func initPriorityList[T any]() *priorityList[T] {
 	pl := &priorityList[T]{
 		tail: InitNodeEmpty[T](),
