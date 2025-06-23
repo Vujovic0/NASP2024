@@ -52,12 +52,14 @@ func (bc *blockCache[T]) addBlock(block T) {
 
 }
 
+// Block is attempted to be accessed from a map. If successful, the node moves up first and returns data
+// of node (block)
 func (bc *blockCache[T]) findBlock(filePath string, offset uint64) (T, bool) {
 	node, ok := bc.nodeMap[initKey(filePath, offset)]
 	if ok {
 		bc.pl.moveUp(node)
 		return node.GetData(), true
 	}
-	var zero T
-	return zero, false
+
+	return nil, false
 }
