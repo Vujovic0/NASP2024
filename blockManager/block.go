@@ -18,7 +18,7 @@ type Block struct {
 }
 
 func InitBlock(filepath string, offset uint64, data []byte) *Block {
-	dataSize := binary.BigEndian.Uint32(data[5:9])
+	dataSize := binary.LittleEndian.Uint32(data[5:9])
 	return &Block{
 		filePath:  filepath,
 		offset:    offset,

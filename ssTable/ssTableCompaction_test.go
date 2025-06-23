@@ -24,13 +24,13 @@ func TestCompactionBasicMerge(t *testing.T) {
 	MergeTables(files, "data/L1.userTable-3.compact.bin")
 	cleanUpOldFiles(t, files)
 
-	result := Find("a")
+	result := Find([]byte("a"))
 	checkEqual(t, string(result), "1", "Incorrect value after compaction")
 
-	result = Find("b")
+	result = Find([]byte("b"))
 	checkEqual(t, string(result), "2", "Incorrect value after compaction")
 
-	result = Find("c")
+	result = Find([]byte("c"))
 	checkEqual(t, string(result), "3", "Incorrect value after compaction")
 }
 
