@@ -1,6 +1,7 @@
 package blockManager
 
 import (
+	"bytes"
 	"testing"
 )
 
@@ -64,9 +65,11 @@ func TestBlockCache_Eviction(t *testing.T) {
 func TestBlockGetAndUpdate(t *testing.T) {
 	cache := InitBlockCache[*Block](2)
 	block1 := &Block{filePath: "file1.txt", offset: 0, data: []byte("block1")}
-
+	block2 := &Block{filePath: "file1.txt", offset: 1, data: []byte("block2")}
+	block3 := &Block{filePath: "file1.txt", offset: 2, data: []byte("block3")}
 	cache.addBlock(block1)
-
+	cache.addBlock(block2)
+	cache.addBlock(block3)
 	if cache.size != 2 {
 		t.Errorf("Expected cache size 2, got %d", cache.size)
 	}
@@ -78,5 +81,21 @@ func TestBlockGetAndUpdate(t *testing.T) {
 	}
 	if _, exists := cache.nodeMap[initKey("file1.txt", 2)]; !exists {
 		t.Errorf("Expected block3 to be in cache")
+	}
+}
+
+func TestOverwrite(t *testing.T) {
+	cache := InitBlockCache[*Block](2)
+	block1 := &Block{filePath: "file1.txt", offset: 0, data: []byte("block1")}
+	block2 := &Block{filePath: "file1.txt", offset: 0, data: []byte("block2")}
+	cache.addBlock(block1)
+	cache.addBlock(block2)
+
+	cachedBlock, _ := cache.findBlock("file1.txt", 0)
+	if !bytes.Equal(block2.data, cachedBlock.data) {
+		t.Errorf("Expected block1 to be overwritten")
+	}
+	if cache.size > 1{
+		t.Errorf("Expected cache size to be 1")
 	}
 }

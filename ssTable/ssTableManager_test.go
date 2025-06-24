@@ -183,11 +183,11 @@ func TestFindMultiBlockEntriesCompact(t *testing.T) {
 	}
 	lastKeyData := SerializeKeyValue(fmt.Sprintf("key%04d", 9), "", false, true)
 
-	CreateCompactSSTable(bigData, lastKeyData, 10, 10)
+	CreateCompactSSTable(bigData, lastKeyData, 15, 15)
 
 	t.Run("RandomAccess", func(t *testing.T) {
-		for i := 0; i < 4; i++ {
-			testKey := fmt.Sprintf("key%04d", i*3)
+		for i := 0; i < 10; i++ {
+			testKey := fmt.Sprintf("key%04d", i)
 			result := Find([]byte(testKey))
 			checkNotNil(t, result, "Missing value for "+testKey)
 			checkEqual(t, len(result), int(blockSize)*2, "Incorrect value length")
@@ -206,17 +206,18 @@ func TestFindMultiBlockEntriesSeparated(t *testing.T) {
 	}
 	lastKeyData := SerializeKeyValue(fmt.Sprintf("key%04d", 9), "", false, true)
 
-	CreateSeparatedSSTable(bigData, lastKeyData, 5, 10)
+	CreateSeparatedSSTable(bigData, lastKeyData, 1, 8)
 
 	t.Run("RandomAccess", func(t *testing.T) {
-		for i := 0; i < 4; i++ {
-			testKey := fmt.Sprintf("key%04d", i*3)
+		for i := 0; i < 10; i++ {
+			testKey := fmt.Sprintf("key%04d", i)
 			result := Find([]byte(testKey))
 			checkNotNil(t, result, "Missing value for "+testKey)
 			checkEqual(t, len(result), int(blockSize)*2, "Incorrect value length")
 		}
 	})
 }
+
 
 func TestFindNonExistentKeys(t *testing.T) {
 	os.RemoveAll("data")
@@ -257,6 +258,63 @@ func TestFindNonExistentKeys(t *testing.T) {
 			if result != nil && len(result) != 0 {
 				t.Errorf("Separated - %s: expected nil or empty, got: %v", tc.name, result)
 			}
+		}
+	})
+}
+
+func TestMultipleKeysInBlock0(t *testing.T) {
+	os.RemoveAll("data")
+
+	// Create several small entries that will all fit inside the first block
+	var data []byte
+	keys := []string{"a", "b", "c", "d", "e", "f", "g"}
+	values := []string{"val_a", "val_b", "val_c", "val_d", "val_e", "val_f", "val_g"}
+
+	for i := range keys {
+		data = append(data, SerializeKeyValue(keys[i], values[i], false, false)...)
+	}
+	lastKeyData := SerializeKeyValue(keys[len(keys)-1], "", false, true)
+
+	// Create both SSTable formats to test
+	CreateCompactSSTable(data, lastKeyData, 2, 2)
+	CreateSeparatedSSTable(data, lastKeyData, 2, 2)
+
+	t.Run("Compact SSTable", func(t *testing.T) {
+		for i, key := range keys {
+			result := Find([]byte(key))
+			checkNotNil(t, result, "Compact: missing result for "+key)
+			checkEqual(t, string(result), values[i], "Compact: wrong value for "+key)
+		}
+	})
+
+	t.Run("Separated SSTable", func(t *testing.T) {
+		for i, key := range keys {
+			result := Find([]byte(key))
+			checkNotNil(t, result, "Separated: missing result for "+key)
+			checkEqual(t, string(result), values[i], "Separated: wrong value for "+key)
+		}
+	})
+}
+
+func TestFindFullBlockEntriesCompact(t *testing.T) {
+	os.RemoveAll("data")
+
+	var bigData []byte
+	for i := 0; i < 10; i++ {
+		key := fmt.Sprintf("key%04d", i)
+		value := strings.Repeat("x", 1)
+		bigData = append(bigData, SerializeKeyValue(key, value, false, false)...)
+	}
+	lastKeyData := SerializeKeyValue(fmt.Sprintf("key%04d", 9), "", false, true)
+
+	CreateCompactSSTable(bigData, lastKeyData, 5, 5)
+
+	t.Run("RandomAccess", func(t *testing.T) {
+		for i := 0; i < 10; i++ {
+			testKey := fmt.Sprintf("key%04d", i)
+			result := Find([]byte(testKey))
+			checkNotNil(t, result, "Missing value for "+testKey)
+			checkEqual(t, len(result), 1, "Incorrect value length")
 		}
 	})
 }

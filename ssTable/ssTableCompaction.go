@@ -29,6 +29,7 @@ type IndexTracker struct {
 	data             []byte  //all data that will be written to disk
 	offset           *uint64 //offset in the index file where to write new block
 	file             *os.File
+	offsetStart      uint64 //at what block does index start (useful if compact)
 	sparsity_counter uint64 //when sparsity_counter moduo global sparsity value equals 0, write to index data
 }
 
@@ -37,7 +38,20 @@ type SummaryTracker struct {
 	offset           *uint64  //offset in the summary file where to write new block
 	file             *os.File //where to write data
 	lastEntry        *Entry   //used as boundary
+	offsetStart      uint64   //at what block does summary start (useful if compact)
+	lastElementStart uint64   //at what block does last element start
 	sparsity_counter uint64   //when sparsity_counter moduo global sparsity value equals 0, write to summary data
+}
+
+func initTracker() *Tracker {
+	var tracker *Tracker = new(Tracker)
+	tracker.dataTracker = new(DataTracker)
+	tracker.dataTracker.offset = new(uint64)
+	tracker.indexTracker = new(IndexTracker)
+	tracker.indexTracker.offset = new(uint64)
+	tracker.summaryTracker = new(SummaryTracker)
+	tracker.summaryTracker.offset = new(uint64)
+	return tracker
 }
 
 // Header represent the number of bytes each header field takes up
@@ -192,9 +206,9 @@ func getBlockEntriesTypeSplit(block *blockManager.Block, file *os.File, offset u
 			keySize = keySize - uint64(len(blockData[29:]))
 		} else {
 			key = append(key, blockData[29:29+keySize]...)
-			keySize = 0
 			value = append(value, blockData[29+keySize:]...)
-			valueSize = valueSize - (uint64(len(blockData[29:])) - keySize)
+			valueSize = valueSize - (uint64(len(blockData[29+keySize:])))
+			keySize = 0
 		}
 
 	} else {
@@ -212,6 +226,7 @@ func getBlockEntriesTypeSplit(block *blockManager.Block, file *os.File, offset u
 	// middle blocks
 	for block.GetType() != 3 {
 		blockData = block.GetData()[9:]
+
 		if !tombstone {
 			if len(blockData) <= int(keySize) {
 				key = append(key, blockData...)
@@ -219,10 +234,10 @@ func getBlockEntriesTypeSplit(block *blockManager.Block, file *os.File, offset u
 			} else {
 				if keySize != 0 {
 					key = append(key, blockData[:keySize]...)
-					keySize = 0
 				}
 				value = append(value, blockData[keySize:]...)
 				valueSize = valueSize - (uint64(len(blockData)) - keySize)
+				keySize = 0
 			}
 
 		} else {
@@ -239,22 +254,13 @@ func getBlockEntriesTypeSplit(block *blockManager.Block, file *os.File, offset u
 
 	// last block
 	blockData = block.GetData()[9:]
+	if keySize != 0 {
+		key = append(key, blockData[:keySize]...)
+	}
 	if !tombstone {
-		if len(blockData) <= int(keySize) {
-			key = append(key, blockData...)
-			keySize = keySize - uint64(len(blockData))
-		} else {
-			if keySize != 0 {
-				key = append(key, blockData[:keySize]...)
-				keySize = 0
-			}
-			value = append(value, blockData[keySize:]...)
-			valueSize = valueSize - (uint64(len(blockData)) - keySize)
-		}
-
+		value = append(value, blockData[keySize:keySize+valueSize]...)
+		keySize = 0
 	} else {
-		key = append(key, blockData...)
-		keySize = keySize - uint64(len(blockData))
 	}
 	offset += 1
 
@@ -292,6 +298,7 @@ func getLimits(files []*os.File) []uint64 {
 // doesn't close the files when they reach the end
 // doesn't delete the old tables
 // if the compaction makes an empty table, delete the opened file (this is checked using lastElement)
+// Folder where the new file should be needs to be created in advance
 func MergeTables(filesArg []*os.File, newFilePath string) {
 	files := make([]*os.File, len(filesArg))
 	copy(files, filesArg)                                     //copies so the filesArg isn't updated while this function is running
@@ -301,7 +308,11 @@ func MergeTables(filesArg []*os.File, newFilePath string) {
 	var tableLimits []uint64 = getLimits(files) //array of limits for all files
 	var filesBlockOffsets []uint64 = make([]uint64, len(files))
 
-	var tracker *Tracker
+	var tracker *Tracker = new(Tracker)
+	tracker.dataTracker = new(DataTracker)
+	tracker.indexTracker = new(IndexTracker)
+	tracker.summaryTracker = new(SummaryTracker)
+
 	defineTracker(newFilePath, tracker)
 	var counter int = 0 // tracks the current file in the array of files it should compare minimum entry with
 
@@ -338,7 +349,7 @@ func MergeTables(filesArg []*os.File, newFilePath string) {
 					minimumEntry = entryIteration
 					minimumIndex = counter
 				} else if comparisonResult == 0 {
-					if minimumEntry.timeStamp > entryIteration.timeStamp {
+					if minimumEntry.timeStamp <= entryIteration.timeStamp {
 						minimumEntry = entryIteration
 						minimumIndex = counter
 					}
@@ -348,7 +359,7 @@ func MergeTables(filesArg []*os.File, newFilePath string) {
 		}
 		if minimumEntry != nil {
 			if !minimumEntry.tombstone {
-				serializedEntry := SerializeEntry(minimumEntry)
+				serializedEntry := SerializeEntry(minimumEntry, false)
 				tracker.summaryTracker.lastEntry = minimumEntry
 				flushDataIfFull(tracker, serializedEntry)
 			}
@@ -359,14 +370,19 @@ func MergeTables(filesArg []*os.File, newFilePath string) {
 			counter = 0
 		}
 
-		//if there is no last entry, that means there are no valid entries at all so
-		//the file should just get deleted
-		if tracker.summaryTracker.lastEntry == nil {
-			os.Remove(newFilePath)
-			return
-		}
 	}
-
+	//if there is no last entry, that means there are no valid entries at all so
+	//the file should just get deleted
+	if tracker.summaryTracker.lastEntry == nil {
+		closeTracker(tracker)
+		os.Remove(newFilePath)
+		return
+	}
+	flushDataBytes(tracker.dataTracker.data, tracker)
+	flushIndexBytes(tracker)
+	flushSummaryBytes(tracker)
+	getGeneration(true)
+	closeTracker(tracker)
 }
 
 // Takes the tracker that tracks all data to write and offsets of their blocks as well as the
@@ -385,7 +401,7 @@ func flushDataIfFull(tracker *Tracker, serializedEntry []byte) {
 		if len(dataArray) == 0 {
 			flushDataBytes(serializedEntry, tracker)
 		} else {
-			flushDataBytes(dataArray, tracker)
+			flushDataBytes(serializedEntry, tracker)
 			dataArray = dataArray[:0]
 			if len(serializedEntry) > config.GlobalBlockSize {
 				flushDataBytes(serializedEntry, tracker)
@@ -412,28 +428,41 @@ func flushDataBytes(array []byte, tracker *Tracker) {
 		blockManager.WriteBlock(file, block)
 		if !bytes.Equal(lastKey, newKey) {
 			lastKey = newKey
-			if config.Compress {
-				tracker.indexTracker.data = binary.AppendUvarint(tracker.indexTracker.data, uint64(len(newKey)))
-			} else {
-				tracker.indexTracker.data = binary.LittleEndian.AppendUint64(tracker.indexTracker.data, uint64(len(newKey)))
+			if tracker.indexTracker.sparsity_counter%uint64(config.IndexSparsity) == 0 {
+				if config.Compress {
+					tracker.indexTracker.data = binary.AppendUvarint(tracker.indexTracker.data, uint64(len(newKey)))
+				} else {
+					tracker.indexTracker.data = binary.LittleEndian.AppendUint64(tracker.indexTracker.data, uint64(len(newKey)))
+				}
+				tracker.indexTracker.data = append(tracker.indexTracker.data, newKey...)
+				if config.Compress {
+					tracker.indexTracker.data = binary.AppendUvarint(tracker.indexTracker.data, uint64(*offset))
+				} else {
+					tracker.indexTracker.data = binary.LittleEndian.AppendUint64(tracker.indexTracker.data, uint64(*offset))
+				}
 			}
-			tracker.indexTracker.data = append(tracker.indexTracker.data, newKey...)
+			tracker.indexTracker.sparsity_counter += 1
 		}
 		*offset += 1
 	}
 }
 
 // | CRC 4B | TimeStamp 8B | Tombstone 1B | Keysize 8B | Valuesize 8B | Key... | Value... |
-func SerializeEntry(entry *Entry) []byte {
+func SerializeEntry(entry *Entry, bound bool) []byte {
 	if config.Compress {
-		return serializeEntryCompressed(entry)
+		return serializeEntryCompressed(entry, bound)
 	} else {
-		return serializeEntryNonCompressed(entry)
+		return serializeEntryNonCompressed(entry, bound)
 	}
 }
 
-func serializeEntryCompressed(entry *Entry) []byte {
+func serializeEntryCompressed(entry *Entry, bound bool) []byte {
 	serializedData := make([]byte, 0)
+	if bound {
+		serializedData = binary.AppendUvarint(serializedData, uint64(len(entry.key)))
+		serializedData = append(serializedData, entry.key...)
+		return serializedData
+	}
 	serializedData = binary.LittleEndian.AppendUint32(serializedData, entry.crc)
 	serializedData = binary.AppendUvarint(serializedData, entry.timeStamp)
 	if entry.tombstone {
@@ -449,8 +478,13 @@ func serializeEntryCompressed(entry *Entry) []byte {
 	return serializedData
 }
 
-func serializeEntryNonCompressed(entry *Entry) []byte {
+func serializeEntryNonCompressed(entry *Entry, bound bool) []byte {
 	serializedData := make([]byte, 0)
+	if bound {
+		serializedData = binary.LittleEndian.AppendUint64(serializedData, uint64(len(entry.key)))
+		serializedData = append(serializedData, entry.key...)
+		return serializedData
+	}
 	serializedData = binary.LittleEndian.AppendUint32(serializedData, entry.crc)
 	serializedData = binary.LittleEndian.AppendUint64(serializedData, entry.timeStamp)
 	if entry.tombstone {
@@ -470,7 +504,7 @@ func defineTracker(newFilePath string, tracker *Tracker) {
 	if len(newFilePath) < 11 {
 		panic("new file path is too short")
 	}
-	if !strings.HasSuffix(newFilePath, "compact.bin") || !strings.HasSuffix(newFilePath, "data.bin") {
+	if !strings.HasSuffix(newFilePath, "compact.bin") && !strings.HasSuffix(newFilePath, "data.bin") {
 		panic("new file path doesn't have correct suffix")
 	}
 
@@ -478,29 +512,33 @@ func defineTracker(newFilePath string, tracker *Tracker) {
 		defineTrackerCompact(newFilePath, tracker)
 	} else if strings.HasSuffix(newFilePath, "data.bin") {
 		defineTrackerSeparate(newFilePath, tracker)
-	} else {
-		panic("the suffix for data file is not correct")
 	}
+}
+
+func closeTracker(tracker *Tracker) {
+	tracker.indexTracker.file.Close()
+	tracker.summaryTracker.file.Close()
+	tracker.indexTracker.file.Close()
 }
 
 // Creates pointers for adequate files and pointers to adequate numbers
 func defineTrackerSeparate(newFilePath string, tracker *Tracker) {
-	filePrefix := newFilePath[len(newFilePath)-len("data.bin"):]
+	filePrefix, found := strings.CutSuffix(newFilePath, "data.bin")
+	if !found {
+		panic("the suffix isn't data.bin")
+	}
 	newFileData, err := os.OpenFile(newFilePath, os.O_CREATE, 0664)
 	if err != nil {
 		panic(err)
 	}
-	defer newFileData.Close()
 	newFileIndex, err := os.OpenFile(filePrefix+"index.bin", os.O_CREATE, 0664)
 	if err != nil {
 		panic(err)
 	}
-	defer newFileIndex.Close()
 	newFileSummary, err := os.OpenFile(filePrefix+"summary.bin", os.O_CREATE, 0664)
 	if err != nil {
 		panic(err)
 	}
-	defer newFileSummary.Close()
 
 	tracker.dataTracker.file = newFileData
 	tracker.indexTracker.file = newFileIndex
@@ -520,7 +558,6 @@ func defineTrackerCompact(newFilePath string, tracker *Tracker) {
 	if err != nil {
 		panic(err)
 	}
-	defer newFile.Close()
 	tracker.dataTracker.file = newFile
 	tracker.indexTracker.file = newFile
 	tracker.summaryTracker.file = newFile
@@ -533,21 +570,30 @@ func defineTrackerCompact(newFilePath string, tracker *Tracker) {
 
 func flushIndexBytes(tracker *Tracker) {
 	array := tracker.indexTracker.data
-	file := tracker.dataTracker.file
-	offset := tracker.dataTracker.offset
+	file := tracker.indexTracker.file
+	offset := tracker.indexTracker.offset
+	tracker.indexTracker.offsetStart = *offset
 	var lastKey []byte = nil
-	for channelResult := range PrepareSSTableBlocks(file.Name(), array, true, *offset, false) {
+	for channelResult := range PrepareSSTableBlocks(file.Name(), array, false, *offset, false) {
 		block := channelResult.Block
 		newKey := channelResult.Key
 		blockManager.WriteBlock(file, block)
 		if !bytes.Equal(lastKey, newKey) {
 			lastKey = newKey
-			if config.Compress {
-				tracker.summaryTracker.data = binary.AppendUvarint(tracker.summaryTracker.data, uint64(len(newKey)))
-			} else {
-				tracker.summaryTracker.data = binary.LittleEndian.AppendUint64(tracker.summaryTracker.data, uint64(len(newKey)))
+			if tracker.summaryTracker.sparsity_counter%uint64(config.SummarySparsity) == 0 {
+				if config.Compress {
+					tracker.summaryTracker.data = binary.AppendUvarint(tracker.summaryTracker.data, uint64(len(newKey)))
+				} else {
+					tracker.summaryTracker.data = binary.LittleEndian.AppendUint64(tracker.summaryTracker.data, uint64(len(newKey)))
+				}
+				tracker.summaryTracker.data = append(tracker.summaryTracker.data, newKey...)
+				if config.Compress {
+					tracker.summaryTracker.data = binary.AppendUvarint(tracker.summaryTracker.data, uint64(*offset))
+				} else {
+					tracker.summaryTracker.data = binary.LittleEndian.AppendUint64(tracker.summaryTracker.data, uint64(*offset))
+				}
 			}
-			tracker.summaryTracker.data = append(tracker.summaryTracker.data, newKey...)
+			tracker.summaryTracker.sparsity_counter += 1
 		}
 		*offset += 1
 	}
@@ -555,30 +601,42 @@ func flushIndexBytes(tracker *Tracker) {
 
 func flushSummaryBytes(tracker *Tracker) {
 	array := tracker.summaryTracker.data
-	file := tracker.dataTracker.file
-	offset := tracker.dataTracker.offset
-	for channelResult := range PrepareSSTableBlocks(file.Name(), array, true, *offset, false) {
+	file := tracker.summaryTracker.file
+	offset := tracker.summaryTracker.offset
+	tracker.summaryTracker.offsetStart = *offset
+	for channelResult := range PrepareSSTableBlocks(file.Name(), array, false, *offset, false) {
 		block := channelResult.Block
 		blockManager.WriteBlock(file, block)
 		*offset += 1
 	}
 
 	lastEntry := tracker.summaryTracker.lastEntry
-	lastEntryData := SerializeEntry(lastEntry)
+	lastEntryData := SerializeEntry(lastEntry, true)
 
-	boundStart := *offset
+	tracker.summaryTracker.lastElementStart = *offset
 
-	for channelResult := range PrepareSSTableBlocks(file.Name(), lastEntryData, true, *offset, true) {
+	for channelResult := range PrepareSSTableBlocks(file.Name(), lastEntryData, false, *offset, true) {
 		block := channelResult.Block
 		blockManager.WriteBlock(file, block)
 		*offset += 1
 	}
 
+	flushFooter(tracker)
+}
+
+func flushFooter(tracker *Tracker) {
+	offset := tracker.summaryTracker.offset
 	footerStart := *offset
+	boundStart := tracker.summaryTracker.lastElementStart
 
 	var footerData []byte = make([]byte, 0)
 
 	footerData = binary.LittleEndian.AppendUint64(footerData, uint64(footerStart))
+	if strings.HasSuffix(tracker.summaryTracker.file.Name(), "compact.bin") {
+		footerData = binary.LittleEndian.AppendUint64(footerData, uint64(tracker.indexTracker.offsetStart))
+		footerData = binary.LittleEndian.AppendUint64(footerData, uint64(tracker.summaryTracker.offsetStart))
+	}
+
 	footerData = binary.LittleEndian.AppendUint64(footerData, uint64(boundStart))
 
 	var blockData []byte = make([]byte, config.GlobalBlockSize)

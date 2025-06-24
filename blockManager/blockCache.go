@@ -35,10 +35,16 @@ type BlockConstraint interface {
 	GetData() []byte
 }
 
-// Adds block, assuming that the block isn't already in cache
+// Adds block, it block with same path and offset already exists then update and move up
 func (bc *blockCache[T]) addBlock(block T) {
 	node := InitNode(block)
 	key := initKey(block.GetFilePath(), block.GetOffset())
+	existingNode, exists := bc.nodeMap[key]
+	if exists {
+		existingNode.data = node.data
+		bc.pl.moveUp(existingNode)
+		return
+	}
 	bc.nodeMap[key] = node
 	bc.pl.AddFirst(node)
 	bc.size += 1

@@ -22,13 +22,7 @@ var blockSize = config.GlobalBlockSize
 // findBlock function moves the block up to be first if it is found
 // After adding to cache, it writes to file
 func WriteBlock(file *os.File, block *Block) {
-	cachedBlock, ok := bc.findBlock(block.GetFilePath(), block.GetOffset())
-	if !ok {
-		bc.addBlock(block)
-	} else {
-		*cachedBlock = *block
-	}
-
+	bc.addBlock(block)
 	file.Seek(int64(block.GetOffset()*uint64(blockSize)), 0)
 	file.Write(block.GetData())
 }
