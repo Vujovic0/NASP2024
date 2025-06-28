@@ -1,0 +1,158 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"log"
+	"os"
+	"time"
+)
+
+// Config represents the configuration structure for the token bucket.
+type Config struct {
+	Capacity     int           `json:"capacity"`
+	TimeInterval time.Duration `json:"timeInterval"`
+}
+
+type TokenBucket struct {
+	capacity       int
+	tokens         int
+	timeInterval   time.Duration
+	lastRefillTime time.Time // Time of the last token refill
+}
+
+func NewTokenBucket(capacity int, timeInterval time.Duration) *TokenBucket {
+	return &TokenBucket{
+		capacity:       capacity,
+		tokens:         capacity,
+		timeInterval:   timeInterval,
+		lastRefillTime: time.Now(),
+	}
+}
+
+func initializeTokenBucket() *TokenBucket {
+	var config Config
+	configData, err := os.ReadFile("config tokenBucket.json")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	err = json.Unmarshal(configData, &config)
+	if err != nil {
+		log.Fatal("Error parsing config: ", err)
+	}
+	// fmt.Println(config)
+
+	tokenBucket := NewTokenBucket(config.Capacity, config.TimeInterval)
+
+	return tokenBucket
+}
+
+// StartRefill starts refilling the token bucket to its capacity every timeInterval.
+func (tb *TokenBucket) StartRefill() {
+	go func() {
+		ticker := time.NewTicker(tb.timeInterval)
+		for range ticker.C {
+			tb.tokens = tb.capacity // Reset tokens to maximum capacity
+			fmt.Println("Token bucket refilled to capacity:", tb.capacity)
+		}
+	}()
+}
+
+func (tb *TokenBucket) Consume() bool {
+	// Check if the time interval has passed since the last refill
+	if time.Since(tb.lastRefillTime) >= tb.timeInterval {
+		// Refill the token bucket to its maximum capacity
+		tb.tokens = tb.capacity
+		tb.lastRefillTime = time.Now()
+		fmt.Println("Token bucket reffilled to capacity: ", tb.capacity)
+
+	}
+
+	// Check if there are tokens available
+	if tb.tokens > 0 {
+		// Consume one token
+		tb.tokens--
+		fmt.Println("Token consumed!")
+		return true
+	}
+	fmt.Println("No tokens available.")
+	return false
+}
+
+// Save state to file
+func (tb *TokenBucket) SaveState(filename string) error {
+	state := map[string]interface{}{
+		"token_bucket_user": map[string]interface{}{
+			"tokens":           tb.tokens,
+			"last_refill_time": tb.lastRefillTime.Format(time.RFC3339),
+		},
+	}
+	data, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filename, data, 0644)
+}
+
+func (tb *TokenBucket) LoadState(filename string) error {
+	// Load data from file
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return err
+	}
+
+	// Parse JSON data into a map
+	state := map[string]interface{}{}
+	err = json.Unmarshal(data, &state)
+	if err != nil {
+		return err
+	}
+
+	// Retrieve data for "token_bucket_user"
+	userState, ok := state["token_bucket_user"].(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("invalid state format: missing token_bucket_user")
+	}
+
+	// Set values in TokenBucket
+	tb.tokens = int(userState["tokens"].(float64))
+	lastRefillTime, err := time.Parse(time.RFC3339, userState["last_refill_time"].(string))
+	if err != nil {
+		return err
+	}
+	tb.lastRefillTime = lastRefillTime
+
+	return nil
+}
+
+func main() {
+
+	tokenBucket := initializeTokenBucket()
+	fmt.Println(tokenBucket)
+
+	// Load state from file
+	err := tokenBucket.LoadState("token_bucket_state.json")
+	if err != nil {
+		fmt.Println("No previous state found, starting fresh.")
+	}
+
+	// Start token refill
+	tokenBucket.StartRefill()
+
+	// Simulate token consumption
+	for i := 0; i < 7; i++ {
+		if tokenBucket.Consume() {
+			// fmt.Println("Token consumed!")
+		} else {
+			// fmt.Println("No tokens available.")
+		}
+		time.Sleep(1 * time.Second)
+	}
+
+	err = tokenBucket.SaveState("token_bucket_state.json")
+	if err != nil {
+		fmt.Println("Error saving state:", err)
+	}
+
+}
