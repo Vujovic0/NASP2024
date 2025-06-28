@@ -5,23 +5,28 @@ import (
 	"fmt"
 	"hash/crc32"
 	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
+
+	"github.com/Vujovic0/NASP2024/blockManager"
 )
+
+const BlockHeaderSize = 9
 
 type LogEntry struct {
 	Timestamp time.Time
 	Tombstone bool
 	Key       string
 	Value     string
-	Type      string
 }
 
 type WAL struct {
 	walNames         []string // NAMES OF ALL WALx.LOG
 	blockSize        int      //
-	segmentSize      int      //
-	currentWalName   string   // THE LAST WAL, THE ONE THAT WE WRITE LOGS IN
+	segmentSize      int      // HOW MANY BLOCKS WE HAVE IN ONE FILE
+	currentFile      *os.File // POINTER TO A FILE THAT WE ARE CURRENTLY USING
 	currentBlock     int      // OFFSET WHERE WE WRITE
 	freeBlock        int      // HOW MUCH FREE SPACE WE GOT IN CURRENT BLOCK THAT WE WRITE IN
 	minimumEntrySize int      // HELPER ATTRIBUTE FOR PADDING
@@ -29,11 +34,7 @@ type WAL struct {
 
 func NewWAL(blockSize int, segmentSize int, currentBlock int, freeBlock int) *WAL {
 	wal := new(WAL)
-	/*file, err := os.OpenFile(fileName, os.O_APPEND|os.O_RDONLY, 0666)
-	if err != nil {
-		fmt.Println(err)
-		return nil
-	}*/
+
 	file, err1 := os.OpenFile("./wal/wals", os.O_RDONLY, 066)
 	if err1 != nil {
 		panic(err1)
@@ -43,52 +44,59 @@ func NewWAL(blockSize int, segmentSize int, currentBlock int, freeBlock int) *WA
 		panic(err2)
 	}
 	file.Close()
-	offset := GettingWALSegmentOffset()
-	fmt.Println(offset)
+	if len(namesOfWals) == 0 {
+		file, err := os.Create("./wal/wals/wal0.bin")
+		if err != nil {
+			fmt.Println("Failed to create the first WAL file:", err)
+		}
+
+		// Update WAL state
+		wal.currentFile = file
+		wal.walNames = append(wal.walNames, "wal0.bin")
+		wal.currentBlock = 0
+	}
+	//fileIndex, blockNumber, logOffset := LoadOffset()
+
 	// DODAJ DA SE PROCITANI OFFSET UBACUJE U WAL
 	wal.walNames = namesOfWals
 	wal.segmentSize = segmentSize
 	wal.blockSize = blockSize
 	wal.currentBlock = currentBlock
 	wal.freeBlock = freeBlock
-	wal.currentWalName = namesOfWals[len(namesOfWals)-1]
+	//wal.currentWalName = namesOfWals[len(namesOfWals)-1]
+	// DODAJ DA JE CURRENTWAL POKAZIVAČ NA OS.FILE
 	wal.minimumEntrySize = 35
 	return wal
 }
 
-func GettingWALSegmentOffset() uint32 {
-	// FUNCTION FOR GETTING OFFSET OF WAL
-	// WHEN FILLING MEMTABLE ON START OF PROGRAM
-	filePath := "wal/offset.bin"
-	file, err := os.OpenFile(filePath, os.O_RDONLY, 0666)
+func LoadOffset() (fileIndex, blockNumber, logOffset uint32) {
+	file, err := os.Open("wal/offset.bin")
 	if err != nil {
 		if os.IsNotExist(err) {
-			file.Close()
-			offset := make([]byte, 4)
-			binary.LittleEndian.PutUint32(offset, uint32(0))
-			file.Write(offset)
-			err := os.WriteFile(filePath, offset, 0644)
+			// IF FILE DOESN'T EXIST, WE CREATE NEW WITH WITH 0, 0, 0 VALUES
+			emptyValues := make([]byte, 12)
+			binary.LittleEndian.PutUint32(emptyValues[0:4], 0)  // file index
+			binary.LittleEndian.PutUint32(emptyValues[4:8], 0)  // block number
+			binary.LittleEndian.PutUint32(emptyValues[8:12], 0) // log offset
+
+			err := os.WriteFile("wal/offset.bin", emptyValues, 0644)
 			if err != nil {
-				fmt.Println("Error creating file:", err)
+				panic("Failed to create offset.bin: " + err.Error())
 			}
-			return 0
+			return 0, 0, 0
 		} else {
-			panic(err)
+			panic("Failed to open offset.bin: " + err.Error())
 		}
-	} else {
-		offsetBytes := make([]byte, 4)
-		_, err := file.Read(offsetBytes)
-		if err != nil {
-			panic(err)
-		}
-		offset := uint32(binary.LittleEndian.Uint32(offsetBytes))
-		if err != nil {
-			fmt.Println("Error reading file:", err)
-			return 0
-		}
-		file.Close()
-		return offset
 	}
+	defer file.Close()
+
+	block := blockManager.ReadBlock(file, 0)
+	blockData := block.GetData()[9:] // [9:] SO WE CAN SKIP BLOCK HEADER
+
+	fileIndex = binary.LittleEndian.Uint32(blockData[0:4])
+	blockNumber = binary.LittleEndian.Uint32(blockData[4:8])
+	logOffset = binary.LittleEndian.Uint32(blockData[8:12])
+	return
 }
 
 func NewLogEntry(key string, value string) *LogEntry {
@@ -97,20 +105,161 @@ func NewLogEntry(key string, value string) *LogEntry {
 	logEntry.Value = value
 	logEntry.Tombstone = false
 	logEntry.Timestamp = time.Now()
-	logEntry.Type = "FULL"
 	return logEntry
+}
+
+func (wal *WAL) WriteLogEntry(key string, value string) {
+	log := NewLogEntry(key, value)
+	logEntryBytes := log.SerializeLogEntry()
+	logSizeNeeded := log.GetSerializedLogSize()
+	if logSizeNeeded+BlockHeaderSize > wal.blockSize {
+		wal.WriteLogEntryType0(logEntryBytes, logSizeNeeded)
+	} else {
+		wal.WriteLongEntryOtherType(logEntryBytes, logSizeNeeded)
+	}
+}
+
+func (wal *WAL) WriteLongEntryOtherType(logEntryBytes []byte, logSizeNeeded int) {
+	wal.currentBlock += 1
+	if wal.currentBlock == wal.segmentSize {
+		wal.InitNewFile()
+	}
+
+	// HELPER INTS TO TRACK WHICH PARTS OF LOG HAVE WE WRITTEN
+	startOffset := 0
+	stopOffset := wal.blockSize - BlockHeaderSize
+
+	blockType := make([]byte, 1)
+	blockType[0] = 1
+	// WRITING THE FIRST TYPE 1 BLOCK
+	blockData := wal.BuildBlock(blockType, logEntryBytes[startOffset:stopOffset])
+	block := blockManager.InitBlock(wal.currentFile.Name(), uint64(wal.currentBlock), blockData)
+	blockManager.WriteBlock(wal.currentFile, block)
+	wal.currentFile.Sync()
+	// WRITING TYPE 2 BLOCKS UNTIL THE LAST PART OF LOG CAN FIT INTO A SINGLE BLOCK
+	blockType[0] = 2
+	for {
+		startOffset = stopOffset
+		stopOffset += wal.blockSize - BlockHeaderSize
+		if (logSizeNeeded - stopOffset) <= (wal.blockSize - BlockHeaderSize) {
+			break
+		}
+		wal.currentBlock += 1
+		if wal.currentBlock == wal.segmentSize {
+			wal.InitNewFile()
+		}
+		blockData := wal.BuildBlock(blockType, logEntryBytes[startOffset:stopOffset])
+		block := blockManager.InitBlock(wal.currentFile.Name(), uint64(wal.currentBlock), blockData)
+		blockManager.WriteBlock(wal.currentFile, block)
+		wal.currentFile.Sync()
+	}
+	// WHEN WE FINISH WITH ALL TYPE 2 BLOCKS, WE WRITE FINAL TYPE 3 BLOCK
+	wal.currentBlock += 1
+	if wal.currentBlock == wal.segmentSize {
+		wal.InitNewFile()
+	}
+	blockType[0] = 3
+	blockData = wal.BuildBlock(blockType, logEntryBytes[startOffset:])
+	block = blockManager.InitBlock(wal.currentFile.Name(), uint64(wal.currentBlock), blockData)
+	blockManager.WriteBlock(wal.currentFile, block)
+	wal.currentFile.Sync()
+	wal.freeBlock = wal.blockSize - 9 - len(logEntryBytes[startOffset:])
+}
+
+func (wal *WAL) WriteLogEntryType0(logEntryBytes []byte, logSizeNeeded int) {
+	currentBlock := blockManager.ReadBlock(wal.currentFile, uint64(wal.currentBlock))
+
+	if currentBlock.GetType() == 0 { // IF CURRENT BLOCK IS FILLED WITH THE END OF THE OLDER LOG
+		if wal.freeBlock >= logSizeNeeded {
+			// WRITING IN THE SAME BLOCK
+			data := append(currentBlock.GetData()[BlockHeaderSize:], logEntryBytes...)
+			blockType := make([]byte, 1)
+			blockType[0] = 0
+			newBlockBytes := wal.BuildBlock(blockType, data)
+			wal.freeBlock = wal.blockSize - len(newBlockBytes)
+			block := blockManager.InitBlock(wal.currentFile.Name(), uint64(wal.currentBlock), newBlockBytes)
+			blockManager.WriteBlock(wal.currentFile, block)
+			wal.currentFile.Sync()
+		} else {
+			wal.currentBlock += 1
+			if wal.currentBlock == wal.segmentSize {
+				// WRITING IN NEW WAL FILE
+				wal.InitNewFile()
+				blockType := make([]byte, 1)
+				blockType[0] = 0
+				newBlockBytes := wal.BuildBlock(blockType, logEntryBytes)
+				block := blockManager.InitBlock(wal.currentFile.Name(), uint64(wal.currentBlock), newBlockBytes)
+				blockManager.WriteBlock(wal.currentFile, block)
+				wal.currentFile.Sync()
+				wal.freeBlock = wal.blockSize - len(newBlockBytes)
+			} else {
+				// WRITING IN NEW BLOCK IN SAME WAL FILE
+				blockType := make([]byte, 1)
+				blockType[0] = 0
+				blockData := wal.BuildBlock(blockType, logEntryBytes)
+				block := blockManager.InitBlock(wal.currentFile.Name(), uint64(wal.currentBlock), blockData)
+				blockManager.WriteBlock(wal.currentFile, block)
+				wal.currentFile.Sync()
+				wal.freeBlock = wal.blockSize - len(blockData)
+			}
+		}
+	}
+}
+
+func (wal *WAL) BuildBlock(blockType []byte, blockData []byte) []byte {
+	dataSize := uint32(len(blockData))
+	block := make([]byte, wal.blockSize)
+	block[4] = blockType[0]
+	binary.BigEndian.PutUint32(block[5:BlockHeaderSize], dataSize)
+	copy(block[9:], blockData)
+	crc := crc32.ChecksumIEEE(block[4:])
+	binary.BigEndian.PutUint32(block[0:4], crc)
+	return block
+}
+
+func (wal *WAL) InitNewFile() bool {
+	wal.currentBlock = 0 // RESETTING BLOCK INDEX FOR THE NEW FILE
+
+	// Close the current file safely
+	if wal.currentFile != nil {
+		wal.currentFile.Close()
+	}
+
+	// Get last used WAL number
+	base := strings.TrimSuffix(wal.walNames[len(wal.walNames)-1], ".bin") // CUTTING OFF .BIN
+	numberStr := strings.TrimPrefix(base, "wal")                          // CUTTING OFF "wal"
+	number, err := strconv.Atoi(numberStr)                                // CONVERTING TO INT
+	if err != nil {
+		fmt.Println("Failed to parse current WAL number:", err)
+		return false
+	}
+
+	newFileName := fmt.Sprintf("wal%d.bin", number+1)
+	fullPath := filepath.Join("wal", "wals", newFileName)
+
+	// Create and open the new file
+	file, err := os.Create(fullPath)
+	if err != nil {
+		fmt.Println("Failed to create new WAL file:", err)
+		return false
+	}
+
+	// Update WAL state
+	wal.currentFile = file
+	wal.walNames = append(wal.walNames, newFileName)
+
+	return true
+}
+
+func (log *LogEntry) GetSerializedLogSize() int {
+	keyBytes := []byte(log.Key)
+	valueBytes := []byte(log.Value)
+
+	return 8 + 1 + 8 + len(keyBytes) + 8 + len(valueBytes) + 4
 }
 
 func (log LogEntry) SerializeLogEntry() []byte {
 	bytes := make([]byte, 0)
-
-	// WHAT LOG IS IT: FULL, FIRST, MIDDLE, LAST
-	typeBytes := []byte(log.Type)
-	typeLen := len(typeBytes)
-	typeLenBytes := make([]byte, 8)
-	binary.LittleEndian.PutUint64(typeLenBytes, uint64(typeLen))
-	bytes = append(bytes, typeLenBytes...)
-	bytes = append(bytes, typeBytes...)
 
 	// WHEN THE LOG WAS CREATED
 	timestampBytes := make([]byte, 8)
@@ -140,144 +289,52 @@ func (log LogEntry) SerializeLogEntry() []byte {
 	CRCbytes := make([]byte, 4)
 	CRC := crc32.ChecksumIEEE(bytes)
 	binary.LittleEndian.PutUint32(CRCbytes, uint32(CRC))
-	bytes = append(bytes, CRCbytes...)
+	bytes = append(CRCbytes, bytes...)
 
 	return bytes
 }
 
-func (log *LogEntry) DeserializeLogEntry(file *os.File) error {
-	
-	typeLenBytes := make([]byte, 8)
-	_, err01 := file.Read(typeLenBytes)
-	if err01 != nil {
-		panic(err01)
-	}
-	typeLen := int64(binary.LittleEndian.Uint64(typeLenBytes))
-
-	typeBytes := make([]byte, typeLen)
-	_, err02 := file.Read(typeBytes)
-	if err02 != nil {
-		panic(err02)
-	}
-	
-	timeStampBytes := make([]byte, 8)
-	_, err2 := file.Read(timeStampBytes)
-	if err2 != nil {
-		panic(err2)
-	}
-	timestamp := int64(binary.LittleEndian.Uint64(timeStampBytes))
-
-	tombstoneBytes := make([]byte, 1)
-	_, err3 := file.Read(tombstoneBytes)
-	if err3 != nil {
-		panic(err3)
-	}
-	var tombstone bool
-	if tombstoneBytes[0] == 0 {
-		tombstone = false
-		} else {
-		tombstone = true
+func DeserializeLogEntry(data []byte) (*LogEntry, error) {
+	// CHECKING IF DATA HAS LENGHT OF MINIMAL LOG
+	if len(data) < 37 {
+		return nil, fmt.Errorf("data too short to be a valid log entry")
 	}
 
-	keyLenBytes := make([]byte, 8)
-	_, err6 := file.Read(keyLenBytes)
-	if err6 != nil {
-		panic(err6)
+	log := new(LogEntry)
+	offset := 0
+
+	// READING AND VALIDATING CRC
+	expectedCRC := binary.LittleEndian.Uint32(data[0:4])
+	computedCRC := crc32.ChecksumIEEE(data[4:])
+	if expectedCRC != computedCRC {
+		return nil, fmt.Errorf("CRC mismatch: expected %d, got %d", expectedCRC, computedCRC)
 	}
-	keyLen := int64(binary.LittleEndian.Uint64(keyLenBytes))
-	
-	keyBytes := make([]byte, keyLen)
-	_, err7 := file.Read(keyBytes)
-	if err7 != nil {
-		panic(err7)
-	}
-	
-	valueLenBytes := make([]byte, 8)
-	_, err8 := file.Read(valueLenBytes)
-	if err8 != nil {
-		panic(err8)
-	}
-	valueLen := int64(binary.LittleEndian.Uint64(valueLenBytes))
-	
-	valueBytes := make([]byte, valueLen)
-	_, err9 := file.Read(valueBytes)
-	if err9 != nil {
-		panic(err9)
-	}
-	
-	key := string(keyBytes)
-	value := string(valueBytes)
-	typeB := string(typeBytes)
-	
-	CRCbytes := make([]byte, 4)
-	_, err1 := file.Read(CRCbytes)
-	if err1 != nil {
-		panic(err1)
-	}
-	CRC := int32(binary.LittleEndian.Uint32(CRCbytes))
-	fmt.Println("CRC Ucitanog loga")
-	fmt.Println(CRC)
-	
-	log.Type = typeB
+	offset += 4
+
+	// TIMESTAMP
+	timestamp := int64(binary.LittleEndian.Uint64(data[offset : offset+8]))
 	log.Timestamp = time.Unix(timestamp, 0)
-	log.Tombstone = tombstone
-	log.Key = key
-	log.Value = value
-	return nil
-}
+	offset += 8
 
-func (wal *WAL) AddEntry(key string, value string) bool {
-	logEntry := NewLogEntry(key, value)
-	filename := "wal/wals/" + wal.currentWalName
-	file, err := os.OpenFile(filename, os.O_APPEND|os.O_RDONLY, 0666)
-	if err != nil {
-		fmt.Println(err)
-		return false
+	// TOMBSTONE
+	log.Tombstone = false
+	if data[offset] != 0 {
+		log.Tombstone = true
 	}
-	bytes := logEntry.SerializeLogEntry()
-	if len(bytes) <= wal.freeBlock && wal.currentBlock != wal.segmentSize {
-		file.Write(bytes)
-		fmt.Println(len(bytes))
-		fmt.Println(wal.freeBlock)
-		wal.freeBlock -= len(bytes)
-		fmt.Println(wal.freeBlock)
-	} else {
-		padding := make([]byte, wal.freeBlock)
-		file.Write(padding)
-		wal.currentBlock += 1
-		wal.freeBlock = wal.blockSize
-		if wal.currentBlock == wal.segmentSize {
-			file.Close()
-			wal.currentBlock = 0
-			newFileName := "wal" + strconv.Itoa(len(wal.walNames)+1) + ".log"
-			wal.currentWalName = newFileName
-			wal.walNames = append(wal.walNames, newFileName)
-			_, err := os.Create("wal/wals/" + newFileName)
-			if err != nil {
-				panic(err)
-			}
-		} else {
-			file.Write(bytes)
-		}
-	}
-	if wal.freeBlock < wal.minimumEntrySize && wal.freeBlock != 0 {
-		padding := make([]byte, wal.freeBlock)
-		file.Write(padding)
-		wal.currentBlock += 1
-		wal.freeBlock = wal.blockSize
-		if wal.currentBlock == wal.segmentSize {
-			wal.currentBlock = 0
-			file.Close()
-			newFileName := "wal" + strconv.Itoa(len(wal.walNames)+1) + ".log"
-			wal.currentWalName = newFileName
-			wal.walNames = append(wal.walNames, newFileName)
-			_, err := os.Create("wal/wals/" + newFileName)
-			if err != nil {
-				panic(err)
-			}
-		}
-	}
-	return true
+	offset += 1
+
+	// KEY
+	keyLen := int(binary.LittleEndian.Uint64(data[offset : offset+8]))
+	offset += 8
+	log.Key = string(data[offset : offset+keyLen])
+	offset += keyLen
+
+	// VALUE
+	valueLen := int(binary.LittleEndian.Uint64(data[offset : offset+8]))
+	offset += 8
+	log.Value = string(data[offset : offset+valueLen])
+
+	return log, nil
 }
 
 func (wal WAL) PrinfOfFileNames() {
@@ -286,27 +343,4 @@ func (wal WAL) PrinfOfFileNames() {
 		print(". ")
 		print(wal.walNames[i])
 	}
-}
-
-func (wal WAL) ReadCurrentWALFile() { // ONLY A HELPER FUNCTION FOR DEBUGGING
-	filename := "wal/wals/" + wal.currentWalName
-	file, err := os.OpenFile(filename, os.O_RDONLY, 0666)
-	if err != nil {
-		panic(err)
-	}
-	log1 := LogEntry{}
-	log2 := LogEntry{}
-
-	file.Seek(0, 0)
-
-	log1.DeserializeLogEntry(file)
-	log2.DeserializeLogEntry(file)
-	fmt.Println(log1.Key)
-	fmt.Println(log1.Value)
-	fmt.Println(log1.Timestamp)
-	fmt.Println(log2.Key)
-	fmt.Println(log2.Value)
-	fmt.Println(log2.Timestamp)
-	file.Close()
-
 }
