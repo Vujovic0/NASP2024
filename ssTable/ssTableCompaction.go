@@ -300,6 +300,7 @@ func getLimits(files []*os.File) []uint64 {
 // doesn't delete the old tables
 // if the compaction makes an empty table, delete the opened file (this is checked using lastElement)
 // Folder where the new file should be needs to be created in advance
+// File pointers need to be sorted from oldest to newest sstable
 func MergeTables(filesArg []*os.File, newFilePath string) {
 	files := make([]*os.File, len(filesArg))
 	copy(files, filesArg)                                     //copies so the filesArg isn't updated while this function is running
@@ -323,7 +324,9 @@ func MergeTables(filesArg []*os.File, newFilePath string) {
 
 	//fills up heap and a map with entries and the index of their file
 	for i := 0; i < len(entryArrays); i++ {
-		entryArrays[i], filesBlockOffsets[i], err = getBlockEntries(files[i], filesBlockOffsets[i], tableLimits[i])
+		if len(entryArrays[i]) == 0 {
+			entryArrays[i], filesBlockOffsets[i], err = getBlockEntries(files[i], filesBlockOffsets[i], tableLimits[i])
+		}
 		if err != nil {
 			panic(err)
 		}
@@ -333,28 +336,28 @@ func MergeTables(filesArg []*os.File, newFilePath string) {
 
 		entry := entryArrays[i][0]
 		keyStr := string(entry.key)
-		if oldEntry, exists := keyEntryMap[keyStr]; exists {
-			if oldEntry.timeStamp < entry.timeStamp {
-				delete(entryTableIndexMap, oldEntry)
-				keyEntryMap[keyStr] = entry
-				entryTableIndexMap[entry] = i
-			} else {
-				entryArrays[i] = entryArrays[i][1:]
-				i--
-				continue
-			}
+		if _, exists := keyEntryMap[keyStr]; exists {
+			updateTableElement(
+				tableLimits,
+				files,
+				entryTableIndexMap,
+				keyEntryMap,
+				entryHeap,
+				entryArrays,
+				filesBlockOffsets,
+				i)
 		} else {
 			keyEntryMap[keyStr] = entry
 			entryTableIndexMap[entry] = i
+			heap.Push(entryHeap, keyStr)
 		}
-		heap.Push(entryHeap, keyStr)
 	}
 
 	for entryHeap.Len() > 0 {
 		minKey := heap.Pop(entryHeap).(string)
 		minEntry := keyEntryMap[minKey]
 		tableIndex := entryTableIndexMap[minEntry]
-
+		entryArrays[tableIndex] = entryArrays[tableIndex][1:]
 		delete(entryTableIndexMap, minEntry)
 		delete(keyEntryMap, minKey)
 
@@ -364,8 +367,6 @@ func MergeTables(filesArg []*os.File, newFilePath string) {
 			flushDataIfFull(tracker, serializedEntry)
 		}
 
-		entryArrays[tableIndex] = entryArrays[tableIndex][1:]
-
 		if len(entryArrays[tableIndex]) == 0 {
 			entryArrays[tableIndex], filesBlockOffsets[tableIndex], err = getBlockEntries(files[tableIndex], filesBlockOffsets[tableIndex], tableLimits[tableIndex])
 			if err != nil {
@@ -373,24 +374,26 @@ func MergeTables(filesArg []*os.File, newFilePath string) {
 			}
 		}
 
-		if len(entryArrays[tableIndex]) > 0 {
-			entry := entryArrays[tableIndex][0]
-			keyStr := string(entry.key)
-			if oldEntry, exists := keyEntryMap[keyStr]; exists {
-				if oldEntry.timeStamp < entry.timeStamp {
-					delete(entryTableIndexMap, oldEntry)
-					keyEntryMap[keyStr] = entry
-					entryTableIndexMap[entry] = tableIndex
-					heap.Push(entryHeap, keyStr)
-				} else {
-					entryArrays[tableIndex] = entryArrays[tableIndex][1:]
-					tableIndex--
-				}
-			} else {
-				keyEntryMap[keyStr] = entry
-				entryTableIndexMap[entry] = tableIndex
-				heap.Push(entryHeap, keyStr)
-			}
+		if len(entryArrays[tableIndex]) == 0 {
+			continue
+		}
+
+		entry := entryArrays[tableIndex][0]
+		keyStr := string(entry.key)
+		if _, exists := keyEntryMap[keyStr]; exists {
+			updateTableElement(
+				tableLimits,
+				files,
+				entryTableIndexMap,
+				keyEntryMap,
+				entryHeap,
+				entryArrays,
+				filesBlockOffsets,
+				tableIndex)
+		} else {
+			keyEntryMap[keyStr] = entry
+			entryTableIndexMap[entry] = tableIndex
+			heap.Push(entryHeap, keyStr)
 		}
 	}
 
@@ -406,6 +409,51 @@ func MergeTables(filesArg []*os.File, newFilePath string) {
 	flushSummaryBytes(tracker)
 	getGeneration(true)
 	closeTracker(tracker)
+}
+
+// called when there is an already existing key on the heap
+func updateTableElement(
+	tableLimits []uint64,
+	files []*os.File, entryTableIndexMap map[*Entry]int,
+	keyEntryMap map[string]*Entry,
+	entryHeap *EntryHeap, entryArrays [][]*Entry,
+	filesBlockOffsets []uint64,
+	tableIndex int) {
+	for {
+		// if truncation reaches the last entry, try to load new entries
+		if len(entryArrays[tableIndex]) == 0 {
+			entryArrays[tableIndex], filesBlockOffsets[tableIndex], _ = getBlockEntries(files[tableIndex], filesBlockOffsets[tableIndex], tableLimits[tableIndex])
+		}
+		// return if no more entries can be read
+		if len(entryArrays[tableIndex]) == 0 {
+			return
+		}
+		entryToAdd := entryArrays[tableIndex][0]
+
+		//check if the key was already loaded onto heap
+		if existingEntry, exists := keyEntryMap[string(entryToAdd.key)]; exists {
+			//if entry is older, truncate entries
+			if entryToAdd.timeStamp < existingEntry.timeStamp {
+				entryArrays[tableIndex] = entryArrays[tableIndex][1:]
+				continue
+			}
+
+			//if it is newer update table index for entry:index map and key:entry map
+			keyEntryMap[string(entryToAdd.key)] = entryToAdd
+			entryTableIndexMap[entryToAdd] = tableIndex
+
+			//now we need load a new entry from the older sstable
+			tableIndex = entryTableIndexMap[existingEntry]
+			delete(entryTableIndexMap, existingEntry)
+			continue
+		}
+
+		//add key to heap and update the entry:index map
+		keyEntryMap[string(entryToAdd.key)] = entryToAdd
+		entryTableIndexMap[entryToAdd] = tableIndex
+		heap.Push(entryHeap, string(entryToAdd.key))
+		return
+	}
 }
 
 // Takes the tracker that tracks all data to write and offsets of their blocks as well as the

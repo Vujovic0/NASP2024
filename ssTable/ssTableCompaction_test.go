@@ -8,7 +8,6 @@ import (
 	"time"
 )
 
-
 func TestCompactionBasicMerge(t *testing.T) {
 	os.RemoveAll("data")
 
@@ -377,6 +376,57 @@ func TestCompactionMixedSizesSeparate(t *testing.T) {
 
 	result4 := Find([]byte(smallKey2))
 	checkEqual(t, string(result4), smallValue, "Incorrect value for small key 2")
+}
+
+func TestCompactionWithManyOverlappingKeys(t *testing.T) {
+	os.RemoveAll("data")
+
+	// Table 1: keys a to e
+	data1 := []byte{}
+	data1 = append(data1, SerializeEntryHelper("a", "1", false, false)...)
+	data1 = append(data1, SerializeEntryHelper("b", "2", false, false)...)
+	data1 = append(data1, SerializeEntryHelper("c", "3", false, false)...)
+	data1 = append(data1, SerializeEntryHelper("d", "4", false, false)...)
+	data1 = append(data1, SerializeEntryHelper("e", "5", false, false)...)
+	last1 := SerializeEntryHelper("e", "", false, true)
+	CreateSeparatedSSTable(data1, last1, 5, 2)
+	time.Sleep(1 * time.Second)
+
+	// Table 2: overlapping keys b to g, some updated, some new
+	data2 := []byte{}
+	data2 = append(data2, SerializeEntryHelper("b", "20", false, false)...)
+	data2 = append(data2, SerializeEntryHelper("c", "30", false, false)...)
+	data2 = append(data2, SerializeEntryHelper("f", "6", false, false)...)
+	data2 = append(data2, SerializeEntryHelper("g", "7", false, false)...)
+	last2 := SerializeEntryHelper("g", "", false, true)
+	CreateSeparatedSSTable(data2, last2, 4, 2)
+	time.Sleep(1 * time.Second)
+
+	// Table 3: overlapping keys a, d, h with updates and new
+	data3 := []byte{}
+	data3 = append(data3, SerializeEntryHelper("a", "100", false, false)...)
+	data3 = append(data3, SerializeEntryHelper("d", "400", false, false)...)
+	data3 = append(data3, SerializeEntryHelper("h", "8", false, false)...)
+	last3 := SerializeEntryHelper("h", "", false, true)
+	CreateSeparatedSSTable(data3, last3, 3, 2)
+	time.Sleep(1 * time.Second)
+
+	files := openAllDataFiles(t)
+	folderPath := filepath.Join("data", "L1")
+	os.Mkdir(folderPath, 0755)
+	newFilePath := filepath.Join("data", "L1", "usertable-3-compact.bin")
+	MergeTables(files, newFilePath)
+	cleanUpOldFiles(t, files)
+
+	// Check expected values after compaction (newest timestamp wins)
+	checkEqual(t, string(Find([]byte("a"))), "100", "Expected a=100 (from table 3)")
+	checkEqual(t, string(Find([]byte("b"))), "20", "Expected b=20 (from table 2)")
+	checkEqual(t, string(Find([]byte("c"))), "30", "Expected c=30 (from table 2)")
+	checkEqual(t, string(Find([]byte("d"))), "400", "Expected d=400 (from table 3)")
+	checkEqual(t, string(Find([]byte("e"))), "5", "Expected e=5 (from table 1)")
+	checkEqual(t, string(Find([]byte("f"))), "6", "Expected f=6 (from table 2)")
+	checkEqual(t, string(Find([]byte("g"))), "7", "Expected g=7 (from table 2)")
+	checkEqual(t, string(Find([]byte("h"))), "8", "Expected h=8 (from table 3)")
 }
 
 func openAllDataFiles(t *testing.T) []*os.File {
