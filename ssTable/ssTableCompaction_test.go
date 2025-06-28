@@ -8,18 +8,19 @@ import (
 	"time"
 )
 
+
 func TestCompactionBasicMerge(t *testing.T) {
 	os.RemoveAll("data")
 
 	// Table 1
-	data1 := SerializeKeyValue("a", "1", false, false)
-	data1 = append(data1, SerializeKeyValue("b", "2", false, false)...)
-	last1 := SerializeKeyValue("b", "", false, true)
+	data1 := SerializeEntryHelper("a", "1", false, false)
+	data1 = append(data1, SerializeEntryHelper("b", "2", false, false)...)
+	last1 := SerializeEntryHelper("b", "", false, true)
 	CreateSeparatedSSTable(data1, last1, 2, 2)
 
 	// Table 2
-	data2 := SerializeKeyValue("c", "3", false, false)
-	last2 := SerializeKeyValue("c", "", false, true)
+	data2 := SerializeEntryHelper("c", "3", false, false)
+	last2 := SerializeEntryHelper("c", "", false, true)
 	CreateSeparatedSSTable(data2, last2, 1, 1)
 
 	files := openAllDataFiles(t)
@@ -43,15 +44,15 @@ func TestCompactionWithOverlappingKeys(t *testing.T) {
 	os.RemoveAll("data")
 
 	// Table 1
-	data1 := SerializeKeyValue("a", "1", false, false)
-	data1 = append(data1, SerializeKeyValue("b", "2", false, false)...)
-	last1 := SerializeKeyValue("b", "", false, true)
+	data1 := SerializeEntryHelper("a", "1", false, false)
+	data1 = append(data1, SerializeEntryHelper("b", "2", false, false)...)
+	last1 := SerializeEntryHelper("b", "", false, true)
 	CreateSeparatedSSTable(data1, last1, 2, 2)
 	time.Sleep(1 * time.Second)
 	// Table 2 (overwrite "b")
-	data2 := SerializeKeyValue("b", "9", false, false)
-	data2 = append(data2, SerializeKeyValue("c", "3", false, false)...)
-	last2 := SerializeKeyValue("c", "", false, true)
+	data2 := SerializeEntryHelper("b", "9", false, false)
+	data2 = append(data2, SerializeEntryHelper("c", "3", false, false)...)
+	last2 := SerializeEntryHelper("c", "", false, true)
 	CreateSeparatedSSTable(data2, last2, 2, 2)
 
 	files := openAllDataFiles(t)
@@ -70,13 +71,13 @@ func TestCompactionWithEmptyTable(t *testing.T) {
 	os.RemoveAll("data")
 
 	// Table 1: contains only tombstoned key
-	data1 := SerializeKeyValue("x", "", true, false)
-	last1 := SerializeKeyValue("x", "", true, true)
+	data1 := SerializeEntryHelper("x", "", true, false)
+	last1 := SerializeEntryHelper("x", "", true, true)
 	CreateSeparatedSSTable(data1, last1, 1, 1)
 
 	// Table 2: contains only tombstoned key
-	data2 := SerializeKeyValue("b", "", true, false)
-	last2 := SerializeKeyValue("b", "", true, true)
+	data2 := SerializeEntryHelper("b", "", true, false)
+	last2 := SerializeEntryHelper("b", "", true, true)
 	CreateSeparatedSSTable(data2, last2, 1, 1)
 
 	// Perform compaction
@@ -110,14 +111,14 @@ func TestCompactionMultiBlockEntries(t *testing.T) {
 	largeValue := strings.Repeat("X", int(blockSize)*2) // Force value to span 2 blocks
 
 	// Table 1
-	data1 := SerializeKeyValue("a", largeValue, false, false)
-	last1 := SerializeKeyValue("a", "", false, true)
+	data1 := SerializeEntryHelper("a", largeValue, false, false)
+	last1 := SerializeEntryHelper("a", "", false, true)
 	CreateSeparatedSSTable(data1, last1, 1, 1)
 
 	time.Sleep(1 * time.Second)
 	// Table 2
-	data2 := SerializeKeyValue("b", largeValue, false, false)
-	last2 := SerializeKeyValue("b", "", false, true)
+	data2 := SerializeEntryHelper("b", largeValue, false, false)
+	last2 := SerializeEntryHelper("b", "", false, true)
 	CreateSeparatedSSTable(data2, last2, 1, 1)
 
 	files := openAllDataFiles(t)
@@ -144,16 +145,16 @@ func TestCompactionMultiBlockKeysCompact(t *testing.T) {
 	value := "short-val"
 
 	// Table 1
-	data1 := SerializeKeyValue(largeKey, value, false, false)
-	last1 := SerializeKeyValue(largeKey, "", false, true)
+	data1 := SerializeEntryHelper(largeKey, value, false, false)
+	last1 := SerializeEntryHelper(largeKey, "", false, true)
 	CreateSeparatedSSTable(data1, last1, 1, 1)
 
 	time.Sleep(1 * time.Second)
 
 	// Table 2 with a second large key
 	largeKey2 := strings.Repeat("Q", int(blockSize)*2)
-	data2 := SerializeKeyValue(largeKey2, value, false, false)
-	last2 := SerializeKeyValue(largeKey2, "", false, true)
+	data2 := SerializeEntryHelper(largeKey2, value, false, false)
+	last2 := SerializeEntryHelper(largeKey2, "", false, true)
 	CreateSeparatedSSTable(data2, last2, 1, 1)
 
 	// Merge tables
@@ -180,16 +181,16 @@ func TestCompactionMultiBlockKeysSeparate(t *testing.T) {
 	value := "short-val"
 
 	// Table 1
-	data1 := SerializeKeyValue(largeKey, value, false, false)
-	last1 := SerializeKeyValue(largeKey, "", false, true)
+	data1 := SerializeEntryHelper(largeKey, value, false, false)
+	last1 := SerializeEntryHelper(largeKey, "", false, true)
 	CreateSeparatedSSTable(data1, last1, 1, 1)
 
 	time.Sleep(1 * time.Second)
 
 	// Table 2 with a second large key
 	largeKey2 := strings.Repeat("Q", int(blockSize)*2)
-	data2 := SerializeKeyValue(largeKey2, value, false, false)
-	last2 := SerializeKeyValue(largeKey2, "", false, true)
+	data2 := SerializeEntryHelper(largeKey2, value, false, false)
+	last2 := SerializeEntryHelper(largeKey2, "", false, true)
 	CreateSeparatedSSTable(data2, last2, 1, 1)
 
 	// Merge tables
@@ -216,16 +217,16 @@ func TestCompactionLargeKeyLargeValueSeparate(t *testing.T) {
 	value := strings.Repeat("X", int(blockSize)*2)
 
 	// Table 1
-	data1 := SerializeKeyValue(largeKey, value, false, false)
-	last1 := SerializeKeyValue(largeKey, "", false, true)
+	data1 := SerializeEntryHelper(largeKey, value, false, false)
+	last1 := SerializeEntryHelper(largeKey, "", false, true)
 	CreateSeparatedSSTable(data1, last1, 1, 1)
 
 	time.Sleep(1 * time.Second)
 
 	// Table 2 with a second large key
 	largeKey2 := strings.Repeat("Q", int(blockSize)*2)
-	data2 := SerializeKeyValue(largeKey2, value, false, false)
-	last2 := SerializeKeyValue(largeKey2, "", false, true)
+	data2 := SerializeEntryHelper(largeKey2, value, false, false)
+	last2 := SerializeEntryHelper(largeKey2, "", false, true)
 	CreateSeparatedSSTable(data2, last2, 1, 1)
 
 	// Merge tables
@@ -252,16 +253,16 @@ func TestCompactionLargeKeyLargeValueCompact(t *testing.T) {
 	value := strings.Repeat("X", int(blockSize)*2)
 
 	// Table 1
-	data1 := SerializeKeyValue(largeKey, value, false, false)
-	last1 := SerializeKeyValue(largeKey, "", false, true)
+	data1 := SerializeEntryHelper(largeKey, value, false, false)
+	last1 := SerializeEntryHelper(largeKey, "", false, true)
 	CreateSeparatedSSTable(data1, last1, 1, 1)
 
 	time.Sleep(1 * time.Second)
 
 	// Table 2 with a second large key
 	largeKey2 := strings.Repeat("Q", int(blockSize)*2)
-	data2 := SerializeKeyValue(largeKey2, value, false, false)
-	last2 := SerializeKeyValue(largeKey2, "", false, true)
+	data2 := SerializeEntryHelper(largeKey2, value, false, false)
+	last2 := SerializeEntryHelper(largeKey2, "", false, true)
 	CreateSeparatedSSTable(data2, last2, 1, 1)
 
 	// Merge tables
@@ -294,17 +295,17 @@ func TestCompactionMixedSizesCompact(t *testing.T) {
 	smallValue := "fruit"
 
 	// --- Table 1: One large and one small entry ---
-	data1 := SerializeKeyValue(largeKey1, largeValue, false, false)
-	data1 = append(data1, SerializeKeyValue(smallKey1, smallValue, false, false)...)
-	last1 := SerializeKeyValue(smallKey1, "", false, true) // last key marker
+	data1 := SerializeEntryHelper(largeKey1, largeValue, false, false)
+	data1 = append(data1, SerializeEntryHelper(smallKey1, smallValue, false, false)...)
+	last1 := SerializeEntryHelper(smallKey1, "", false, true) // last key marker
 	CreateSeparatedSSTable(data1, last1, 1, 1)
 
 	time.Sleep(1 * time.Second)
 
 	// --- Table 2: Another large and another small entry ---
-	data2 := SerializeKeyValue(largeKey2, largeValue, false, false)
-	data2 = append(data2, SerializeKeyValue(smallKey2, smallValue, false, false)...)
-	last2 := SerializeKeyValue(smallKey2, "", false, true)
+	data2 := SerializeEntryHelper(largeKey2, largeValue, false, false)
+	data2 = append(data2, SerializeEntryHelper(smallKey2, smallValue, false, false)...)
+	last2 := SerializeEntryHelper(smallKey2, "", false, true)
 	CreateSeparatedSSTable(data2, last2, 1, 1)
 
 	// --- Perform compaction ---
@@ -343,17 +344,17 @@ func TestCompactionMixedSizesSeparate(t *testing.T) {
 	smallValue := "fruit"
 
 	// --- Table 1: One large and one small entry ---
-	data1 := SerializeKeyValue(largeKey1, largeValue, false, false)
-	data1 = append(data1, SerializeKeyValue(smallKey1, smallValue, false, false)...)
-	last1 := SerializeKeyValue(smallKey1, "", false, true) // last key marker
+	data1 := SerializeEntryHelper(largeKey1, largeValue, false, false)
+	data1 = append(data1, SerializeEntryHelper(smallKey1, smallValue, false, false)...)
+	last1 := SerializeEntryHelper(smallKey1, "", false, true) // last key marker
 	CreateSeparatedSSTable(data1, last1, 1, 1)
 
 	time.Sleep(1 * time.Second)
 
 	// --- Table 2: Another large and another small entry ---
-	data2 := SerializeKeyValue(largeKey2, largeValue, false, false)
-	data2 = append(data2, SerializeKeyValue(smallKey2, smallValue, false, false)...)
-	last2 := SerializeKeyValue(smallKey2, "", false, true)
+	data2 := SerializeEntryHelper(largeKey2, largeValue, false, false)
+	data2 = append(data2, SerializeEntryHelper(smallKey2, smallValue, false, false)...)
+	last2 := SerializeEntryHelper(smallKey2, "", false, true)
 	CreateSeparatedSSTable(data2, last2, 1, 1)
 
 	// --- Perform compaction ---

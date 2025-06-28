@@ -54,15 +54,6 @@ func initTracker() *Tracker {
 	return tracker
 }
 
-// Header represent the number of bytes each header field takes up
-type Header struct {
-	crcBytes       int
-	timeStampBytes int
-	tombstoneBytes int
-	keySizeBytes   int
-	valueSizeBytes int
-}
-
 // | CRC 4B | TimeStamp 8B | Tombstone 1B | Keysize 8B | Valuesize 8B | Key... | Value... |
 type Entry struct {
 	crc       uint32
@@ -136,31 +127,26 @@ func getBlockEntriesTypeFull(block *blockManager.Block) ([]*Entry, error) {
 	var entryArray []*Entry
 
 	for blockPointer < uint64(block.GetSize()) {
+		header := InitHeader(blockData[blockPointer:], true)
 		crc := binary.LittleEndian.Uint32(blockData[blockPointer : blockPointer+4])
-		timeStamp := binary.LittleEndian.Uint64(blockData[blockPointer+4 : blockPointer+12])
+		timeStamp := GetTimeStamp(blockPointer, blockData, header)
 
-		if blockData[blockPointer+12] == 1 {
-			tombstone = true
-		} else if blockData[blockPointer+12] == 0 {
-			tombstone = false
-		} else {
-			return nil, errors.New("tombstone byte should be 1 or 0")
-		}
+		tombstone = GetTombstone(blockPointer, blockData, header)
 
-		keySize := binary.LittleEndian.Uint64(blockData[blockPointer+13 : blockPointer+21])
+		keySize := GetKeySize(blockPointer, blockData, header)
+		keyStart := blockPointer + uint64(GetHeaderSize(header))
+		keyEnd := keyStart + keySize
 		if !tombstone {
-			keyStart := blockPointer + 29
-			keyEnd := keyStart + keySize
-			valueSize := binary.LittleEndian.Uint64(blockData[blockPointer+21 : blockPointer+29])
+			valueSize := GetValueSize(blockPointer, blockData, header, false, true)
 			valEnd := keyEnd + valueSize
 			key = blockData[keyStart:keyEnd]
 			value = blockData[keyEnd:valEnd]
 			blockPointer = valEnd
 		} else {
 			valueSize := uint64(0)
-			key = blockData[blockPointer+21 : blockPointer+21+keySize]
+			key = blockData[keyStart:keyEnd]
 			value = nil
-			blockPointer = blockPointer + keySize + valueSize + 21
+			blockPointer = blockPointer + keyStart + keySize + valueSize
 		}
 
 		entry := initEntry(crc, tombstone, timeStamp, key, value)
@@ -174,7 +160,7 @@ func getBlockEntriesTypeFull(block *blockManager.Block) ([]*Entry, error) {
 }
 
 // | CRC 4B | TimeStamp 8B | Tombstone 1B | Keysize 8B | Valuesize 8B | Key... | Value... |
-// Returns an entry that spans multiple blocks as an array with a single entry pointer because
+// Returns an entry that spans multiple data segment blocks as an array with a single entry pointer because
 // arrays are used later in merge sorting
 func getBlockEntriesTypeSplit(block *blockManager.Block, file *os.File, offset uint64, limit uint64) ([]*Entry, uint64, error) {
 	blockData := block.GetData()[9:]
@@ -183,38 +169,47 @@ func getBlockEntriesTypeSplit(block *blockManager.Block, file *os.File, offset u
 	var key []byte
 	var value []byte
 
+	header := InitHeader(blockData, true)
+
+	var dataBlock bool
+	if strings.HasSuffix(block.GetFilePath(), "data.bin") {
+		dataBlock = true
+	} else {
+		dataBlock = false
+	}
 	// first block
 	crc := binary.LittleEndian.Uint32(blockData[0:4])
-	timeStamp := binary.LittleEndian.Uint64(blockData[4:12])
+	timeStamp := GetTimeStamp(0, blockData, header)
 
 	var valueSize uint64
 
-	if blockData[12] == 1 {
-		tombstone = true
-	} else if blockData[12] == 0 {
-		tombstone = false
-	} else {
-		return nil, 0, errors.New("tombstone byte should be 1 or 0")
+	tombstone = GetTombstone(0, blockData, header)
+
+	keySize := GetKeySize(0, blockData, header)
+
+	headerSize := uint64(GetHeaderSize(header))
+
+	if dataBlock {
+		valueSize = GetValueSize(0, blockData, header, false, true)
 	}
 
-	keySize := binary.LittleEndian.Uint64(blockData[13:21])
-
 	if !tombstone {
-		valueSize = binary.LittleEndian.Uint64(blockData[21:29])
-		if len(blockData[29:]) <= int(keySize) {
-			key = append(key, blockData[29:]...)
-			keySize = keySize - uint64(len(blockData[29:]))
+
+		if len(blockData[headerSize:]) <= int(keySize) {
+			key = append(key, blockData[headerSize:]...)
+			keySize = keySize - uint64(len(blockData[headerSize:]))
 		} else {
-			key = append(key, blockData[29:29+keySize]...)
-			value = append(value, blockData[29+keySize:]...)
-			valueSize = valueSize - (uint64(len(blockData[29+keySize:])))
+			key = append(key, blockData[headerSize:headerSize+keySize]...)
+			value = append(value, blockData[headerSize+keySize:]...)
+			if dataBlock {
+				valueSize = valueSize - (uint64(len(blockData[headerSize+keySize:])))
+			}
 			keySize = 0
 		}
 
 	} else {
-		valueSize = uint64(0)
-		key = append(key, blockData[21:]...)
-		keySize = keySize - uint64(len(blockData[21:]))
+		key = append(key, blockData[headerSize:]...)
+		keySize = keySize - uint64(len(blockData[headerSize:]))
 	}
 
 	offset += 1
@@ -236,7 +231,9 @@ func getBlockEntriesTypeSplit(block *blockManager.Block, file *os.File, offset u
 					key = append(key, blockData[:keySize]...)
 				}
 				value = append(value, blockData[keySize:]...)
-				valueSize = valueSize - (uint64(len(blockData)) - keySize)
+				if dataBlock {
+					valueSize = valueSize - (uint64(len(blockData)) - keySize)
+				}
 				keySize = 0
 			}
 
@@ -258,7 +255,11 @@ func getBlockEntriesTypeSplit(block *blockManager.Block, file *os.File, offset u
 		key = append(key, blockData[:keySize]...)
 	}
 	if !tombstone {
-		value = append(value, blockData[keySize:keySize+valueSize]...)
+		if dataBlock {
+			value = append(value, blockData[keySize:keySize+valueSize]...)
+		} else {
+			value = append(value, blockData[keySize:]...)
+		}
 		keySize = 0
 	} else {
 	}
@@ -429,13 +430,13 @@ func flushDataBytes(array []byte, tracker *Tracker) {
 		if !bytes.Equal(lastKey, newKey) {
 			lastKey = newKey
 			if tracker.indexTracker.sparsity_counter%uint64(config.IndexSparsity) == 0 {
-				if config.Compress {
+				if config.VariableEncoding {
 					tracker.indexTracker.data = binary.AppendUvarint(tracker.indexTracker.data, uint64(len(newKey)))
 				} else {
 					tracker.indexTracker.data = binary.LittleEndian.AppendUint64(tracker.indexTracker.data, uint64(len(newKey)))
 				}
 				tracker.indexTracker.data = append(tracker.indexTracker.data, newKey...)
-				if config.Compress {
+				if config.VariableEncoding {
 					tracker.indexTracker.data = binary.AppendUvarint(tracker.indexTracker.data, uint64(*offset))
 				} else {
 					tracker.indexTracker.data = binary.LittleEndian.AppendUint64(tracker.indexTracker.data, uint64(*offset))
@@ -449,7 +450,7 @@ func flushDataBytes(array []byte, tracker *Tracker) {
 
 // | CRC 4B | TimeStamp 8B | Tombstone 1B | Keysize 8B | Valuesize 8B | Key... | Value... |
 func SerializeEntry(entry *Entry, bound bool) []byte {
-	if config.Compress {
+	if config.VariableEncoding {
 		return serializeEntryCompressed(entry, bound)
 	} else {
 		return serializeEntryNonCompressed(entry, bound)
@@ -581,13 +582,13 @@ func flushIndexBytes(tracker *Tracker) {
 		if !bytes.Equal(lastKey, newKey) {
 			lastKey = newKey
 			if tracker.summaryTracker.sparsity_counter%uint64(config.SummarySparsity) == 0 {
-				if config.Compress {
+				if config.VariableEncoding {
 					tracker.summaryTracker.data = binary.AppendUvarint(tracker.summaryTracker.data, uint64(len(newKey)))
 				} else {
 					tracker.summaryTracker.data = binary.LittleEndian.AppendUint64(tracker.summaryTracker.data, uint64(len(newKey)))
 				}
 				tracker.summaryTracker.data = append(tracker.summaryTracker.data, newKey...)
-				if config.Compress {
+				if config.VariableEncoding {
 					tracker.summaryTracker.data = binary.AppendUvarint(tracker.summaryTracker.data, uint64(*offset))
 				} else {
 					tracker.summaryTracker.data = binary.LittleEndian.AppendUint64(tracker.summaryTracker.data, uint64(*offset))
@@ -647,47 +648,4 @@ func flushFooter(tracker *Tracker) {
 
 	block := blockManager.InitBlock(tracker.summaryTracker.file.Name(), *offset, blockData)
 	blockManager.WriteBlock(tracker.summaryTracker.file, block)
-}
-
-// Takes []byte where the first bytes should represent an entry header
-// If compression is on, the header size of the entry is variable
-// If compression is not on, the header size is fixed
-// CRC and tombstone are always fixed to 4 bytes and 1 byte
-// timestamp, keysize and valuesize are dynamic
-func findHeaderSizes(array []byte) *Header {
-	header := new(Header)
-	headerPointer := 0
-	if config.Compress {
-		header.crcBytes = 4
-		headerPointer += header.crcBytes
-
-		_, header.timeStampBytes = binary.Uvarint(array[headerPointer:])
-		if header.timeStampBytes == 0 {
-			panic("decoding failed")
-		}
-		headerPointer += header.timeStampBytes
-
-		header.tombstoneBytes = 1
-		headerPointer += header.tombstoneBytes
-
-		_, header.keySizeBytes = binary.Uvarint((array[headerPointer:]))
-		if header.keySizeBytes == 0 {
-			panic("decoding failed")
-		}
-		headerPointer += header.keySizeBytes
-
-		_, header.valueSizeBytes = binary.Uvarint((array[headerPointer:]))
-		if header.valueSizeBytes == 0 {
-			panic("decoding failed")
-		}
-
-	} else {
-		header.crcBytes = 4
-		header.timeStampBytes = 8
-		header.tombstoneBytes = 1
-		header.keySizeBytes = 8
-		header.valueSizeBytes = 8
-	}
-
-	return header
 }
