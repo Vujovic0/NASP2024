@@ -4,11 +4,11 @@ import (
 	"NASP2024/blockManager"
 	"NASP2024/config"
 	"bytes"
+	"container/heap"
 	"encoding/binary"
 	"errors"
 	"hash/crc32"
 	"os"
-	"slices"
 	"strings"
 )
 
@@ -304,8 +304,7 @@ func MergeTables(filesArg []*os.File, newFilePath string) {
 	files := make([]*os.File, len(filesArg))
 	copy(files, filesArg)                                     //copies so the filesArg isn't updated while this function is running
 	var entryArrays [][]*Entry = make([][]*Entry, len(files)) //entries for each iteration of block read are put here
-	var minimumEntry *Entry
-	var minimumIndex int                        //index of the file with the current smallest entry
+
 	var tableLimits []uint64 = getLimits(files) //array of limits for all files
 	var filesBlockOffsets []uint64 = make([]uint64, len(files))
 
@@ -314,64 +313,87 @@ func MergeTables(filesArg []*os.File, newFilePath string) {
 	tracker.indexTracker = new(IndexTracker)
 	tracker.summaryTracker = new(SummaryTracker)
 
+	var entryTableIndexMap map[*Entry]int = make(map[*Entry]int)
+	var keyEntryMap map[string]*Entry = make(map[string]*Entry)
+	entryHeap := &EntryHeap{}
+	heap.Init(entryHeap)
 	defineTracker(newFilePath, tracker)
-	var counter int = 0 // tracks the current file in the array of files it should compare minimum entry with
 
 	var err error
-	//iterates through all file entries until there are no files to read
-	for len(entryArrays) != 0 {
-		//finds the smallest entry
-		for counter < len(entryArrays) {
-			//try to fill up entryArrays, if failed pop at index
-			if len(entryArrays[counter]) == 0 {
-				entryArrays[counter], filesBlockOffsets[counter], err = getBlockEntries(files[counter], uint64(filesBlockOffsets[counter]), tableLimits[counter])
 
-				if err != nil {
-					panic(err)
-				}
-				if len(entryArrays[counter]) == 0 {
-					entryArrays = slices.Delete(entryArrays, counter, counter+1)
-					filesBlockOffsets = slices.Delete(filesBlockOffsets, counter, counter+1)
-					files = slices.Delete(files, counter, counter+1)
-					tableLimits = slices.Delete(tableLimits, counter, counter+1)
-					continue
-				}
-			}
-			//takes first entry as smallest because the smallest of all files will always be popped
-			entryIteration := entryArrays[counter][0]
+	//fills up heap and a map with entries and the index of their file
+	for i := 0; i < len(entryArrays); i++ {
+		entryArrays[i], filesBlockOffsets[i], err = getBlockEntries(files[i], filesBlockOffsets[i], tableLimits[i])
+		if err != nil {
+			panic(err)
+		}
+		if len(entryArrays[i]) == 0 {
+			continue
+		}
 
-			//compares current smallest to the overall smallest
-			if minimumEntry == nil {
-				minimumEntry = entryIteration
-				minimumIndex = counter
+		entry := entryArrays[i][0]
+		keyStr := string(entry.key)
+		if oldEntry, exists := keyEntryMap[keyStr]; exists {
+			if oldEntry.timeStamp < entry.timeStamp {
+				delete(entryTableIndexMap, oldEntry)
+				keyEntryMap[keyStr] = entry
+				entryTableIndexMap[entry] = i
 			} else {
-				comparisonResult := bytes.Compare(minimumEntry.key, entryIteration.key)
-				if comparisonResult > 0 {
-					minimumEntry = entryIteration
-					minimumIndex = counter
-				} else if comparisonResult == 0 {
-					if minimumEntry.timeStamp <= entryIteration.timeStamp {
-						minimumEntry = entryIteration
-						minimumIndex = counter
-					}
-				}
+				entryArrays[i] = entryArrays[i][1:]
+				i--
+				continue
 			}
-			counter += 1
+		} else {
+			keyEntryMap[keyStr] = entry
+			entryTableIndexMap[entry] = i
 		}
-		if minimumEntry != nil {
-			if !minimumEntry.tombstone {
-				serializedEntry := SerializeEntry(minimumEntry, false)
-				tracker.summaryTracker.lastEntry = minimumEntry
-				flushDataIfFull(tracker, serializedEntry)
-			}
-			//pops first element of the slice in O(1) time because slices are cool
-			//the first element represents the current smallest key in all tables
-			entryArrays[minimumIndex] = entryArrays[minimumIndex][1:]
-			minimumEntry = nil
-			counter = 0
+		heap.Push(entryHeap, keyStr)
+	}
+
+	for entryHeap.Len() > 0 {
+		minKey := heap.Pop(entryHeap).(string)
+		minEntry := keyEntryMap[minKey]
+		tableIndex := entryTableIndexMap[minEntry]
+
+		delete(entryTableIndexMap, minEntry)
+		delete(keyEntryMap, minKey)
+
+		if !minEntry.tombstone {
+			serializedEntry := SerializeEntry(minEntry, false)
+			tracker.summaryTracker.lastEntry = minEntry
+			flushDataIfFull(tracker, serializedEntry)
 		}
 
+		entryArrays[tableIndex] = entryArrays[tableIndex][1:]
+
+		if len(entryArrays[tableIndex]) == 0 {
+			entryArrays[tableIndex], filesBlockOffsets[tableIndex], err = getBlockEntries(files[tableIndex], filesBlockOffsets[tableIndex], tableLimits[tableIndex])
+			if err != nil {
+				panic(err)
+			}
+		}
+
+		if len(entryArrays[tableIndex]) > 0 {
+			entry := entryArrays[tableIndex][0]
+			keyStr := string(entry.key)
+			if oldEntry, exists := keyEntryMap[keyStr]; exists {
+				if oldEntry.timeStamp < entry.timeStamp {
+					delete(entryTableIndexMap, oldEntry)
+					keyEntryMap[keyStr] = entry
+					entryTableIndexMap[entry] = tableIndex
+					heap.Push(entryHeap, keyStr)
+				} else {
+					entryArrays[tableIndex] = entryArrays[tableIndex][1:]
+					tableIndex--
+				}
+			} else {
+				keyEntryMap[keyStr] = entry
+				entryTableIndexMap[entry] = tableIndex
+				heap.Push(entryHeap, keyStr)
+			}
+		}
 	}
+
 	//if there is no last entry, that means there are no valid entries at all so
 	//the file should just get deleted
 	if tracker.summaryTracker.lastEntry == nil {
