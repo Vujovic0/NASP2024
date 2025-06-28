@@ -5,4 +5,4 @@ var GlobalBlockSize int = pageSize * 1
 var MaxLSMLevel byte = 3
 var IndexSparsity byte = 5
 var SummarySparsity byte = 5
-var Compress bool = false
+var VariableEncoding bool = true
