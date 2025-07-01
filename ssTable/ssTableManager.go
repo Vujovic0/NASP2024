@@ -3,6 +3,7 @@ package ssTable
 import (
 	"NASP2024/blockManager"
 	"NASP2024/config"
+	"NASP2024/utils"
 	"bytes"
 	"encoding/binary"
 	"errors"
@@ -530,6 +531,19 @@ func CreateCompactSSTable(data []byte, lastElementData []byte, summarySparsity i
 	}
 	_, finalDict := CompressWithDictionary(values)
 	dictPath := fmt.Sprintf("data/usertable-%d.dict", generation)
+	dict, _ := LoadDictionaryFromFile(dictPath)
+	if err != nil {
+		panic("Could not load dictionary: " + err.Error())
+	}
+
+	serialized := make([][]byte, 0, len(entries))
+	for _, raw := range entries {
+		strVal := string(raw)
+		decompressed := DecompressSingle(strVal, dict)
+		elem := utils.ParseElementFromString(decompressed) // You'll need a helper for this
+		serialized = append(serialized, utils.SerializeEntry(&elem, true))
+	}
+
 	SaveDictionaryToFile(finalDict, dictPath)
 }
 
@@ -1272,5 +1286,126 @@ func getBoundIndex(file *os.File) uint64 {
 		return binary.LittleEndian.Uint64(data[8*1 : 8*2])
 	default:
 		panic("file doesn't have footer")
+	}
+}
+
+type Element struct {
+	Key       string
+	Value     string
+	Timestamp int64
+	Tombstone bool
+}
+
+func LoadAllElements(path string) []Element {
+	file, err := os.Open(path)
+	if err != nil {
+		panic(err)
+	}
+	defer file.Close()
+
+	dictPath := strings.Replace(path, ".bin", ".dict", 1)
+	dict, _ := LoadDictionaryFromFile(dictPath)
+
+	var elements []Element
+	blockOffset := uint64(0)
+
+	for {
+		block := blockManager.ReadBlock(file, blockOffset)
+		if block == nil {
+			break
+		}
+
+		blockOffset++
+		if block.GetType() != 0 {
+			continue
+		}
+
+		data := block.GetData()[9 : 9+block.GetSize()]
+		buf := bytes.NewBuffer(data)
+		for buf.Len() > 0 {
+			crc := make([]byte, 4)
+			buf.Read(crc)
+
+			timestamp, _ := binary.ReadVarint(buf)
+			tombstone, _ := binary.ReadUvarint(buf)
+			keyLen, _ := binary.ReadUvarint(buf)
+			valLen, _ := binary.ReadUvarint(buf)
+
+			key := make([]byte, keyLen)
+			buf.Read(key)
+			val := make([]byte, valLen)
+			buf.Read(val)
+
+			decoded := DecompressSingle(string(val), dict)
+
+			elements = append(elements, Element{
+				Key:       string(key),
+				Value:     decoded,
+				Timestamp: timestamp,
+				Tombstone: tombstone == 1,
+			})
+		}
+	}
+
+	return elements
+}
+
+func EncodeData(elems []Element) []byte {
+	var buf bytes.Buffer
+	for _, elem := range elems {
+		crc := make([]byte, 4)
+		binary.Write(&buf, binary.LittleEndian, crc)
+		binary.Write(&buf, binary.BigEndian, elem.Timestamp)
+		tomb := uint64(0)
+		if elem.Tombstone {
+			tomb = 1
+		}
+		binary.Write(&buf, binary.BigEndian, tomb)
+		binary.Write(&buf, binary.BigEndian, uint64(len(elem.Key)))
+		binary.Write(&buf, binary.BigEndian, uint64(len(elem.Value)))
+		buf.Write([]byte(elem.Key))
+		buf.Write([]byte(elem.Value))
+	}
+	return buf.Bytes()
+}
+
+func EncodeLastEntry(elem Element) []byte {
+	buf := make([]byte, 0)
+	buf = binary.AppendUvarint(buf, uint64(len(elem.Key)))
+	buf = append(buf, []byte(elem.Key)...)
+	return buf
+}
+
+func PromoteLevel(currentLevel int) string {
+	nextLevel := currentLevel + 1
+	os.MkdirAll(fmt.Sprintf("data/L%d", nextLevel), 0755)
+	return fmt.Sprintf("data/L%d", nextLevel)
+}
+
+func WriteMergedSSTable(entries []*Element) {
+	var data []byte
+	for _, e := range entries {
+		entry := initEntry(0, e.Tombstone, uint64(e.Timestamp), []byte(e.Key), []byte(e.Value))
+		data = append(data, SerializeEntry(entry, e.Tombstone)...)
+	}
+
+	last := entries[len(entries)-1]
+	lastKeyBytes := []byte(last.Key)
+	lastKeySize := uint64(len(lastKeyBytes))
+	var lastBuf []byte
+	if config.VariableEncoding {
+		lastBuf = binary.AppendUvarint(lastBuf, lastKeySize)
+	} else {
+		lastBuf = binary.LittleEndian.AppendUint64(lastBuf, lastKeySize)
+	}
+	lastBuf = append(lastBuf, lastKeyBytes...)
+
+	CreateCompactSSTable(data, lastBuf, 2, 4)
+}
+
+func CleanLevel0() {
+	files, _ := filepath.Glob("data/L0/*.bin")
+	for _, f := range files {
+		os.Remove(f)
 	}
 }

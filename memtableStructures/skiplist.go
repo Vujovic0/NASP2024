@@ -1,4 +1,4 @@
-package main
+package memtableStructures
 
 import (
 	"fmt"
@@ -29,7 +29,7 @@ func (s *SkipList) roll() int {
 	return level
 }
 
-func newSkipList(maxHeight int) *SkipList {
+func NewSkipList(maxHeight int) *SkipList {
 	head := &Node{next: make([]*Node, maxHeight+1)}
 	return &SkipList{head: head, maxHeight: maxHeight, height: 0}
 }
@@ -160,6 +160,18 @@ func (s *SkipList) getAllElements() []*Element {
 	current := s.head.next[0] // Pocinjemo od najnizeg nivoa
 	for current != nil {
 		if !current.value.Tombstone { // Preskacemo logicki obrisane elemente
+			elements = append(elements, current.value)
+		}
+		current = current.next[0]
+	}
+	return elements
+}
+
+func (sl *SkipList) GetAllElementsSorted() []*Element {
+	var elements []*Element
+	current := sl.head.next[0]
+	for current != nil {
+		if !current.value.Tombstone {
 			elements = append(elements, current.value)
 		}
 		current = current.next[0]

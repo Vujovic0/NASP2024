@@ -1,6 +1,7 @@
 package wal
 
 import (
+	"NASP2024/blockManager"
 	"encoding/binary"
 	"fmt"
 	"hash/crc32"
@@ -9,8 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/Vujovic0/NASP2024/blockManager"
 )
 
 const BlockHeaderSize = 9

@@ -93,7 +93,7 @@ type Memtable interface {
 
 func initializeSkipListMemTable(config *Config) *MemoryTable {
 	// Kreiranje SkipList-a
-	skipList := newSkipList(16) // Primer maksimalne visine
+	skipList := NewSkipList(16) // Primer maksimalne visine
 	memTable := &MemoryTable{
 		Data:        skipList,
 		MaxSize:     config.MemtableSize,
@@ -143,7 +143,7 @@ func (mt *MemoryTable) Search(key string) (*Element, bool) {
 
 	if mt.Structure == "skiplist" {
 		sl := mt.Data.(*SkipList)
-		value := sl.search(key)
+		value, _ := sl.search(key)
 		if value == nil {
 			fmt.Println("Ne postoji element sa unetim kljucem!")
 
@@ -202,7 +202,7 @@ func (mt *MemoryTable) Flush() {
 	// Resetovanje memtable
 	mt.Data = nil
 	if mt.Structure == "skiplist" {
-		mt.Data = newSkipList(16) // Kreiramo novu praznu SkipList
+		mt.Data = NewSkipList(16) // Kreiramo novu praznu SkipList
 	} else if mt.Structure == "btree" {
 		// Kreirajte novu praznu BTree strukturu
 		mt.Data = nil
@@ -261,4 +261,4 @@ func (mt *MemoryTable) Flush() {
 		fmt.Println("Element not found")
 	}
 }
- */
+*/

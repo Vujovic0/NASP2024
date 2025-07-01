@@ -3,7 +3,10 @@ package ssTable
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/gob"
 	"errors"
+	"os"
+	"strings"
 )
 
 // Dictionary Encoder
@@ -61,4 +64,27 @@ func CompressWithVarint(nums []uint64) []byte {
 		buf.Write(binary.AppendUvarint(nil, n))
 	}
 	return buf.Bytes()
+}
+
+func LoadDictionaryFromFile(path string) (map[string]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	var dict map[string]string
+	decoder := gob.NewDecoder(f)
+	err = decoder.Decode(&dict)
+	if err != nil {
+		return nil, err
+	}
+	return dict, nil
+}
+
+func DecompressSingle(val string, dict map[string]string) string {
+	for code, word := range dict {
+		val = strings.ReplaceAll(val, code, word)
+	}
+	return val
 }

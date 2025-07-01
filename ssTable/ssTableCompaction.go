@@ -3,6 +3,7 @@ package ssTable
 import (
 	"NASP2024/blockManager"
 	"NASP2024/config"
+	"NASP2024/memtableStructures"
 	"bytes"
 	"container/heap"
 	"encoding/binary"
@@ -844,14 +845,29 @@ func encodeLastKey(key string) []byte {
 	return buf
 }
 
-func (mt *MemoryTable) Flush() {
+func convertMemtableElements(in []*memtableStructures.Element) []*Element {
+	out := make([]*Element, len(in))
+	for i, e := range in {
+		out[i] = &Element{
+			Key:       e.Key,
+			Value:     e.Value,
+			Timestamp: e.Timestamp,
+			Tombstone: e.Tombstone,
+		}
+	}
+	return out
+}
+
+func FlushMemoryTable(mt *memtableStructures.MemoryTable) {
 	fmt.Println("Flushing memtable...")
 
 	var elements []*Element
 
 	if mt.Structure == "skiplist" {
-		skipList := mt.Data.(*SkipList)
-		elements = skipList.getAllElementsSorted()
+		skipList := mt.Data.(*memtableStructures.SkipList)
+		elements := convertMemtableElements(skipList.GetAllElementsSorted())			
+		WriteMergedSSTable(elements)
+
 	} else if mt.Structure == "btree" {
 		// elements = btree.getAllElementsSorted()
 		fmt.Println("BTree flush not yet implemented")
@@ -873,7 +889,7 @@ func (mt *MemoryTable) Flush() {
 
 	// Resetuj
 	if mt.Structure == "skiplist" {
-		mt.Data = newSkipList(16)
+		mt.Data = memtableStructures.NewSkipList(16)
 	} else if mt.Structure == "btree" {
 		mt.Data = nil // init btree ovde
 	}
