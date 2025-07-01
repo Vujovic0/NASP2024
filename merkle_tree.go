@@ -203,63 +203,26 @@ func deserializeMerkleTree(data []byte) (*MerkleTree, error) {
 			level[j] = string(hashBytes)
 		}
 
-		mt.TreeLevels[i] = level
+		// Ako je kraj
+		if byteValue == 0 {
+			break
+		}
 	}
-
-	// Postavljamo Leaves (prvi nivo)
-	if len(mt.TreeLevels) > 0 {
-		mt.Leaves = mt.TreeLevels[0]
+	// Dodavanje poslednjeg nivoa
+	if len(currentLevel) > 0 {
+		mt.TreeLevels = append(mt.TreeLevels, currentLevel)
 	}
-
-	return &mt, nil
-}
-
-func testSerialization() {
-	testElements := []*Element{
-		{Key: "user1", Value: "data1", Timestamp: 1234567890, Tombstone: false},
-		{Key: "user2", Value: "data2", Timestamp: 1234567891, Tombstone: false},
-	}
-
-	// Kreiramo originalno stablo
-	original := NewMerkleTree(testElements)
-
-	// Serijalizujumo
-	serialized, err := serializeMerkleTree(original)
-	if err != nil {
-		fmt.Printf("Serialization error: %v\n", err)
-		return
-	}
-
-	// Deserijalizujemo
-	deserialized, err := deserializeMerkleTree(serialized)
-	if err != nil {
-		fmt.Printf("Deserialization error: %v\n", err)
-		return
-	}
-
-	// Uporedjujemo root hash-ove
-	fmt.Printf("Original Root:     %s\n", original.getRoot())
-	fmt.Printf("Deserialized Root: %s\n", deserialized.getRoot())
-	fmt.Printf("Roots match: %t\n", original.getRoot() == deserialized.getRoot())
+	return mt, nil
 }
 
 // func main() {
-// 	// Test podaci sa Element objektima
-// 	testElements := []*Element{
-// 		{Key: "user1", Value: "data1", Timestamp: 1234567890, Tombstone: false},
-// 		{Key: "user2", Value: "data2", Timestamp: 1234567891, Tombstone: false},
-// 		{Key: "user3", Value: "", Timestamp: 1234567892, Tombstone: true},
-// 		{Key: "user4", Value: "data4", Timestamp: 1234567893, Tombstone: false},
-// 	}
+// 	data := []string{"leaf1", "leaf2", "leaf3", "leaf4"}
+// 	merkleTree := NewMerkleTree(data)
 
-// 	merkleTree := NewMerkleTree(testElements)
-
-// 	fmt.Println("Merkle Tree Levels:")
-// 	for i, level := range merkleTree.TreeLevels {
-// 		fmt.Printf("Level %d: %v\n", i, level)
-// 	}
+	fmt.Println("Merkle Tree Levels:")
+	for i, level := range merkleTree.TreeLevels {
+		fmt.Printf("Level %d: %v\n", i, level)
+	}
 
 // 	fmt.Println("Merkle Root:", merkleTree.getRoot())
-
-// 	// testSerialization()
 // }
