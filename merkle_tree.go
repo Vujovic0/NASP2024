@@ -3,12 +3,62 @@ package main
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 )
 
+type Element struct {
+	Key       string
+	Value     string
+	Timestamp int64
+	Tombstone bool
+}
+
 type MerkleTree struct {
-	Leaves     []string   // Listovi stabla (pocetni podaci)
-	TreeLevels [][]string // Nivoi stabla (hijerarhija)
+	Leaves     []string   // Hash-ovi listova (Element objekata)
+	TreeLevels [][]string // Nivoi stabla (hijerarhija hash-ova)
+}
+
+// Funkcija za serijalizaciju Element objekta u byte array
+func elementToBytes(element *Element) []byte {
+	var buffer bytes.Buffer
+	tmp := make([]byte, binary.MaxVarintLen64)
+
+	// 1. Duzina kljuca
+	n := binary.PutUvarint(tmp, uint64(len(element.Key)))
+	buffer.Write(tmp[:n])
+
+	// 2. Kljuc
+	buffer.WriteString(element.Key)
+
+	// 3. Timestamp
+	n = binary.PutVarint(tmp, element.Timestamp)
+	buffer.Write(tmp[:n])
+
+	// 4. Tombstone
+	if element.Tombstone {
+		buffer.WriteByte(1)
+	} else {
+		buffer.WriteByte(0)
+	}
+
+	// 5. Ako element nije obrisan, upisujemo duzinu vrednosti i vrednost
+	if !element.Tombstone {
+		n = binary.PutUvarint(tmp, uint64(len(element.Value)))
+		buffer.Write(tmp[:n])
+		buffer.WriteString(element.Value)
+	}
+
+	return buffer.Bytes()
+}
+
+// Funkcija za heshiranje Element objekta
+func hashElement(element *Element) string {
+	data := elementToBytes(element)
+	h := sha256.New()
+	h.Write(data)
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // Funkcija za heshiranje ulaznog stringa
@@ -18,11 +68,11 @@ func hashData(data string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// Inicijalizacija Merkle stabla sa datim listovima
-func NewMerkleTree(data []string) *MerkleTree {
-	leaves := make([]string, len(data))
-	for i, d := range data {
-		leaves[i] = hashData(d)
+// Inicijalizacija Merkle stabla sa datim Element objektima
+func NewMerkleTree(elements []*Element) *MerkleTree {
+	leaves := make([]string, len(elements))
+	for i, element := range elements {
+		leaves[i] = hashElement(element)
 	}
 	tree := &MerkleTree{
 		Leaves: leaves,
@@ -47,7 +97,7 @@ func (mt *MerkleTree) buildTree() {
 				nextLevel = append(nextLevel, hashData(combined))
 			} else {
 				combined := currentLevel[i] + emptyElementHash
-				nextLevel = append(nextLevel, combined)
+				nextLevel = append(nextLevel, hashData(combined))
 			}
 		}
 		mt.TreeLevels = append(mt.TreeLevels, nextLevel) // Dodajemo novi nivo u stablo
@@ -58,7 +108,7 @@ func (mt *MerkleTree) buildTree() {
 
 func (mt *MerkleTree) getRoot() string {
 	if len(mt.TreeLevels) == 0 {
-		return " "
+		return "" // Ako stablo nema nivoe, vracamo prazan string
 	}
 	lastLevel := mt.TreeLevels[len(mt.TreeLevels)-1]
 	if len(lastLevel) == 0 {
@@ -67,62 +117,142 @@ func (mt *MerkleTree) getRoot() string {
 	return lastLevel[0]
 
 }
+
 func serializeMerkleTree(mt *MerkleTree) ([]byte, error) {
 	var buf bytes.Buffer
 
-	// Serijalizuja svakog nivao krenuvsi od listova
+	// Serijalizujemo broj nivoa
+	levelCount := uint32(len(mt.TreeLevels))
+	err := binary.Write(&buf, binary.LittleEndian, levelCount)
+	if err != nil {
+		return nil, err
+	}
+
+	// Serijalizujemo svaki nivo
 	for _, level := range mt.TreeLevels {
-		// Serijalizacija niza stringova u nivou
-		for _, item := range level {
-			buf.Write([]byte(item))
-			buf.Write([]byte{0}) // Dodajemo separator za razdvajanje elemenata u nivou
+		// Broj hash-ova u nivou
+		hashCount := uint32(len(level))
+		err = binary.Write(&buf, binary.LittleEndian, hashCount)
+		if err != nil {
+			return nil, err
 		}
-		buf.Write([]byte{1}) // Dodajemo separator za razdvajanje nivoa
+
+		// Svaki hash u nivou
+		for _, hash := range level {
+			// Duzina hash-a
+			hashLen := uint32(len(hash))
+			err = binary.Write(&buf, binary.LittleEndian, hashLen)
+			if err != nil {
+				return nil, err
+			}
+
+			// Hash string
+			_, err = buf.WriteString(hash)
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	return buf.Bytes(), nil
 }
 
-func deserializeMerkleTree(data []byte) (MerkleTree, error) {
-	var mt MerkleTree
-	var currentLevel []string
+func deserializeMerkleTree(data []byte) (*MerkleTree, error) {
 	buf := bytes.NewReader(data)
-	var byteValue byte
+	var mt MerkleTree
 
-	// Citanje podataka level po level
-	for {
-		byteValue, _ = buf.ReadByte()
-		if byteValue == 1 { // Separator izmedju nivoa
-			mt.TreeLevels = append(mt.TreeLevels, currentLevel)
-			currentLevel = []string{}
-		} else if byteValue == 0 {
-			continue
+	// Citamo broj nivoa
+	var levelCount uint32
+	err := binary.Read(buf, binary.LittleEndian, &levelCount)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read level count: %w", err)
+	}
 
-		} else {
-			// Citanje hash-a
-			var hash string
-			for byteValue != 0 && byteValue != 1 {
-				hash += string(byteValue)
-				byteValue, _ = buf.ReadByte()
+	mt.TreeLevels = make([][]string, levelCount)
+
+	// Citamo svaki nivo
+	for i := uint32(0); i < levelCount; i++ {
+		// Broj hash-ova u nivou
+		var hashCount uint32
+		err = binary.Read(buf, binary.LittleEndian, &hashCount)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read hash count for level %d: %w", i, err)
+		}
+
+		level := make([]string, hashCount)
+
+		// Citamo svaki hash
+		for j := uint32(0); j < hashCount; j++ {
+			// Duzina hash-a
+			var hashLen uint32
+			err = binary.Read(buf, binary.LittleEndian, &hashLen)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read hash length: %w", err)
 			}
-			currentLevel = append(currentLevel, hash)
+
+			// Hash string
+			hashBytes := make([]byte, hashLen)
+			bytesRead, err := buf.Read(hashBytes)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read hash: %w", err)
+			}
+			if bytesRead != int(hashLen) {
+				return nil, fmt.Errorf("expected to read %d bytes, got %d", hashLen, bytesRead)
+			}
+
+			level[j] = string(hashBytes)
 		}
 
-		// Ako je kraj
-		if byteValue == 0 {
-			break
-		}
+		mt.TreeLevels[i] = level
 	}
-	// Dodavanje poslednjeg nivoa
-	if len(currentLevel) > 0 {
-		mt.TreeLevels = append(mt.TreeLevels, currentLevel)
+
+	// Postavljamo Leaves (prvi nivo)
+	if len(mt.TreeLevels) > 0 {
+		mt.Leaves = mt.TreeLevels[0]
 	}
-	return mt, nil
+
+	return &mt, nil
+}
+
+func testSerialization() {
+	testElements := []*Element{
+		{Key: "user1", Value: "data1", Timestamp: 1234567890, Tombstone: false},
+		{Key: "user2", Value: "data2", Timestamp: 1234567891, Tombstone: false},
+	}
+
+	// Kreiramo originalno stablo
+	original := NewMerkleTree(testElements)
+
+	// Serijalizujumo
+	serialized, err := serializeMerkleTree(original)
+	if err != nil {
+		fmt.Printf("Serialization error: %v\n", err)
+		return
+	}
+
+	// Deserijalizujemo
+	deserialized, err := deserializeMerkleTree(serialized)
+	if err != nil {
+		fmt.Printf("Deserialization error: %v\n", err)
+		return
+	}
+
+	// Uporedjujemo root hash-ove
+	fmt.Printf("Original Root:     %s\n", original.getRoot())
+	fmt.Printf("Deserialized Root: %s\n", deserialized.getRoot())
+	fmt.Printf("Roots match: %t\n", original.getRoot() == deserialized.getRoot())
 }
 
 // func main() {
-// 	data := []string{"leaf1", "leaf2", "leaf3", "leaf4"}
-// 	merkleTree := NewMerkleTree(data)
+// 	// Test podaci sa Element objektima
+// 	testElements := []*Element{
+// 		{Key: "user1", Value: "data1", Timestamp: 1234567890, Tombstone: false},
+// 		{Key: "user2", Value: "data2", Timestamp: 1234567891, Tombstone: false},
+// 		{Key: "user3", Value: "", Timestamp: 1234567892, Tombstone: true},
+// 		{Key: "user4", Value: "data4", Timestamp: 1234567893, Tombstone: false},
+// 	}
+
+// 	merkleTree := NewMerkleTree(testElements)
 
 // 	fmt.Println("Merkle Tree Levels:")
 // 	for i, level := range merkleTree.TreeLevels {
@@ -130,4 +260,6 @@ func deserializeMerkleTree(data []byte) (MerkleTree, error) {
 // 	}
 
 // 	fmt.Println("Merkle Root:", merkleTree.getRoot())
+
+// 	// testSerialization()
 // }
