@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"hash/crc32"
 	"os"
 	"path/filepath"
@@ -24,8 +25,9 @@ const (
 var blockSize uint64 = uint64(config.GlobalBlockSize)
 
 type channelResult struct {
-	Block *blockManager.Block
-	Key   []byte
+	Block  *blockManager.Block
+	Key    []byte
+	Offset int64
 }
 
 // Creates blocks for the SSTable without writing them. Works as a generator function when used with keyword "range".
@@ -122,7 +124,7 @@ func PrepareSSTableBlocks(filePath string, data []byte, dataBlocksCheck bool, bl
 					binary.LittleEndian.PutUint32(blockData[0:4], crcValue)
 
 					block = blockManager.InitBlock(filePath, blockOffset, blockData)
-					ch <- &channelResult{Block: block, Key: key}
+					ch <- &channelResult{Block: block, Key: key, Offset: int64(blockOffset)}
 					break
 				}
 				continue
@@ -420,120 +422,143 @@ func FindLastSmallerKey(key []byte, keys [][]byte) int64 {
 	return -1
 }
 
+func ParseEntries(data []byte) map[string]string {
+	m := make(map[string]string)
+	buf := bytes.NewBuffer(data)
+	for buf.Len() > 0 {
+		keyLen, _ := binary.ReadUvarint(buf)
+		key := make([]byte, keyLen)
+		buf.Read(key)
+		valLen, _ := binary.ReadUvarint(buf)
+		val := make([]byte, valLen)
+		buf.Read(val)
+		m[string(key)] = string(val)
+	}
+	return m
+}
+
+func BuildDictionary(m map[string]string) *Dictionary {
+	dict := NewDictionary()
+	for _, v := range m {
+		dict.Encode(v)
+	}
+	return dict
+}
+
 // Entires of summary and index are of fomrat |KEYSIZE|VALUESIZE|KEY|VALUE|
 // First entry of summary is last entry of data format:
 // |KEYSIZE|KEY| and it's used to check if element is out of bounds
 // Entires of data are |CRC|TIMESTAMP|TOMBSTONE|KEYSIZE|VALUESIZE|KEY|VALUE
-func CreateCompactSSTable(data []byte, lastElementData []byte, summary_sparsity int, index_sparsity int) {
-	if _, err := os.Stat("data"); os.IsNotExist(err) {
-		err := os.Mkdir("data", 0644)
-		if err != nil {
-			panic(err)
-		}
-		err = os.Mkdir("data"+string(os.PathSeparator)+"L0", 0644)
-		if err != nil {
-			panic(err)
-		}
-	}
-
+func CreateCompactSSTable(data []byte, lastElementData []byte, summarySparsity int, indexSparsity int) {
+	os.MkdirAll("data/L0", 0755)
 	generation := getGeneration(true)
-
-	fileName := "data" + string(os.PathSeparator) + "L0" + string(os.PathSeparator) + "usertable-" + strconv.FormatUint(uint64(generation), 10) + "-compact.bin"
-	file, err := os.OpenFile(fileName, os.O_CREATE, 0664)
+	fileName := fmt.Sprintf("data/L0/usertable-%d-compact.bin", generation)
+	file, err := os.OpenFile(fileName, os.O_CREATE|os.O_RDWR, 0664)
 	if err != nil {
 		panic(err)
 	}
 	defer file.Close()
 
-	var indexData []byte
-	var summaryData []byte
+	var (
+		indexData    []byte
+		summaryData  []byte
+		keyBinary    []byte
+		counter      int
+		blockCounter uint64
+		summaryStart uint64
+		indexStart   uint64
+		footerStart  uint64
+	)
 
-	var keyBinary []byte
-
-	var counter int = 0
-	var blockCounter uint64 = 0
-	var summaryStart uint64 = 0
-	var indexStart uint64 = 0
-	var footerStart uint64 = 0
-
-	//Creates the data segment while preparing data for the index segment
-	for channelResult := range PrepareSSTableBlocks(fileName, data, true, 0, false) {
-		blockManager.WriteBlock(file, channelResult.Block)
-		blockCounter += 1
-		if !bytes.Equal(keyBinary, channelResult.Key) {
-			keyBinary = channelResult.Key
-			if counter%index_sparsity == 0 {
-				if !config.VariableEncoding {
-					indexData = binary.LittleEndian.AppendUint64(indexData, uint64(len(keyBinary)))
-					indexData = append(indexData, keyBinary...)
-					indexData = binary.LittleEndian.AppendUint64(indexData, uint64(channelResult.Block.GetOffset()))
-				} else {
-					indexData = binary.AppendUvarint(indexData, uint64(len(keyBinary)))
-					indexData = append(indexData, keyBinary...)
-					indexData = binary.AppendUvarint(indexData, uint64(channelResult.Block.GetOffset()))
-				}
+	// Write data blocks and build index
+	for res := range PrepareSSTableBlocks(fileName, data, true, 0, false) {
+		blockManager.WriteBlock(file, res.Block)
+		blockCounter++
+		if !bytes.Equal(keyBinary, res.Key) {
+			keyBinary = res.Key
+			if counter%indexSparsity == 0 {
+				offset := res.Offset
+				indexData = appendIndexEntry(indexData, keyBinary, offset)
 			}
 		}
-		counter += 1
+		counter++
 	}
 
+	// Write index blocks and build summary
 	keyBinary = nil
 	indexStart = blockCounter
 	counter = 0
 
-	//Creates the index segment while preparing data for the summary segment
-	for channelResult := range PrepareSSTableBlocks(fileName, indexData, false, blockCounter, false) {
-		blockManager.WriteBlock(file, channelResult.Block)
-		blockCounter += 1
-		if !bytes.Equal(keyBinary, channelResult.Key) {
-			keyBinary = channelResult.Key
-			if counter%summary_sparsity == 0 {
-				if !config.VariableEncoding {
-					summaryData = binary.LittleEndian.AppendUint64(summaryData, uint64(len(keyBinary)))
-					summaryData = append(summaryData, keyBinary...)
-					summaryData = binary.LittleEndian.AppendUint64(summaryData, uint64(channelResult.Block.GetOffset()))
-				} else {
-					summaryData = binary.AppendUvarint(summaryData, uint64(len(keyBinary)))
-					summaryData = append(summaryData, keyBinary...)
-					summaryData = binary.AppendUvarint(summaryData, uint64(channelResult.Block.GetOffset()))
-				}
+	for res := range PrepareSSTableBlocks(fileName, indexData, false, blockCounter, false) {
+		blockManager.WriteBlock(file, res.Block)
+		blockCounter++
+		if !bytes.Equal(keyBinary, res.Key) {
+			keyBinary = res.Key
+			if counter%summarySparsity == 0 {
+				offset := res.Offset
+				summaryData = appendIndexEntry(summaryData, keyBinary, offset)
 			}
 		}
-		counter += 1
+		counter++
 	}
 
+	// Write summary blocks
 	summaryStart = blockCounter
-
-	//Creates summary segment
-	for channelResult := range PrepareSSTableBlocks(fileName, summaryData, false, blockCounter, false) {
-		blockManager.WriteBlock(file, channelResult.Block)
-		blockCounter += 1
+	for res := range PrepareSSTableBlocks(fileName, summaryData, false, blockCounter, false) {
+		blockManager.WriteBlock(file, res.Block)
+		blockCounter++
 	}
 
+	// Write final boundary key block
 	boundStart := blockCounter
-
-	for channelResult := range PrepareSSTableBlocks(fileName, lastElementData, false, blockCounter, true) {
-		blockManager.WriteBlock(file, channelResult.Block)
-		blockCounter += 1
+	for res := range PrepareSSTableBlocks(fileName, lastElementData, false, blockCounter, true) {
+		blockManager.WriteBlock(file, res.Block)
+		blockCounter++
 	}
 
+	// Write footer block
 	footerStart = blockCounter
+	footerData := encodeFooter(footerStart, indexStart, summaryStart, boundStart)
+	footerBlock := blockManager.InitBlock(fileName, blockCounter, footerData)
+	blockManager.WriteBlock(file, footerBlock)
 
-	var footerData []byte = make([]byte, 0)
+	// Build and save dictionary
+	entries := ParseEntries(data)
+	values := make([]string, 0, len(entries))
+	for _, v := range entries {
+		values = append(values, string(v))
+	}
+	_, finalDict := CompressWithDictionary(values)
+	dictPath := fmt.Sprintf("data/usertable-%d.dict", generation)
+	SaveDictionaryToFile(finalDict, dictPath)
+}
 
-	footerData = binary.LittleEndian.AppendUint64(footerData, footerStart)
-	footerData = binary.LittleEndian.AppendUint64(footerData, indexStart)
-	footerData = binary.LittleEndian.AppendUint64(footerData, summaryStart)
-	footerData = binary.LittleEndian.AppendUint64(footerData, boundStart)
+func appendIndexEntry(buf []byte, key []byte, offset int64) []byte {
+	if !config.VariableEncoding {
+		buf = binary.LittleEndian.AppendUint64(buf, uint64(len(key)))
+		buf = append(buf, key...)
+		buf = binary.LittleEndian.AppendUint64(buf, uint64(offset))
+	} else {
+		buf = binary.AppendUvarint(buf, uint64(len(key)))
+		buf = append(buf, key...)
+		buf = binary.AppendUvarint(buf, uint64(offset))
+	}
+	return buf
+}
 
-	var blockData []byte = make([]byte, blockSize)
-	copy(blockData[9:], footerData)
-	blockData[4] = 0
-	binary.LittleEndian.PutUint32(blockData[0:4], crc32.ChecksumIEEE(blockData[4:]))
-	binary.LittleEndian.PutUint32(blockData[5:9], uint32(len(footerData)))
+func encodeFooter(footerStart, indexStart, summaryStart, boundStart uint64) []byte {
+	footer := make([]byte, 0)
+	footer = binary.LittleEndian.AppendUint64(footer, footerStart)
+	footer = binary.LittleEndian.AppendUint64(footer, indexStart)
+	footer = binary.LittleEndian.AppendUint64(footer, summaryStart)
+	footer = binary.LittleEndian.AppendUint64(footer, boundStart)
 
-	block := blockManager.InitBlock(fileName, blockCounter, blockData)
-	blockManager.WriteBlock(file, block)
+	block := make([]byte, config.BlockSize)
+	copy(block[9:], footer)
+	block[4] = 0
+	binary.LittleEndian.PutUint32(block[0:4], crc32.ChecksumIEEE(block[4:]))
+	binary.LittleEndian.PutUint32(block[5:9], uint32(len(footer)))
+	return block
 }
 
 // Entires of summary and index are of fomrat |KEYSIZE|VALUESIZE|KEY|VALUE|
@@ -1166,8 +1191,8 @@ func Find(key []byte) []byte {
 	return nil
 }
 
-func getReadOrder(){
-	
+func getReadOrder() {
+
 }
 
 // Last element is the maximum bound for the sstable

@@ -7,8 +7,11 @@ import (
 	"container/heap"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"hash/crc32"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -587,9 +590,15 @@ func defineTracker(newFilePath string, tracker *Tracker) {
 }
 
 func closeTracker(tracker *Tracker) {
-	tracker.indexTracker.file.Close()
-	tracker.summaryTracker.file.Close()
-	tracker.indexTracker.file.Close()
+	if tracker.dataTracker.file != nil {
+		tracker.dataTracker.file.Close()
+	}
+	if tracker.indexTracker.file != nil && tracker.indexTracker.file != tracker.dataTracker.file {
+		tracker.indexTracker.file.Close()
+	}
+	if tracker.summaryTracker.file != nil && tracker.summaryTracker.file != tracker.dataTracker.file {
+		tracker.summaryTracker.file.Close()
+	}
 }
 
 // Creates pointers for adequate files and pointers to adequate numbers
@@ -718,4 +727,212 @@ func flushFooter(tracker *Tracker) {
 
 	block := blockManager.InitBlock(tracker.summaryTracker.file.Name(), *offset, blockData)
 	blockManager.WriteBlock(tracker.summaryTracker.file, block)
+}
+
+func ExtractLastKey(path string) []byte {
+	file, err := os.Open(path)
+	if err != nil {
+		panic(err)
+	}
+	defer file.Close()
+	info, _ := file.Stat()
+	lastBlock := int64(info.Size()/int64(config.GlobalBlockSize) - 1)
+	block := blockManager.ReadBlock(file, uint64(lastBlock))
+	data := block.GetData()[9:]
+	header := InitHeader(data, true)
+	keySize := GetKeySize(0, data, header)
+	keyStart := GetHeaderSize(header)
+	return data[keyStart : keyStart+int(keySize)]
+}
+
+const maxLevel = 4 // može biti iz config.GlobalMaxLevel
+
+// Trigger size-tiered kompakciju kada u jednom nivou imamo više od n SSTable fajlova
+func SizeTieredCompaction(levelPath string, threshold int) {
+	files, _ := os.ReadDir(levelPath)
+	sstableFiles := []string{}
+	for _, f := range files {
+		if strings.HasSuffix(f.Name(), "-compact.bin") {
+			sstableFiles = append(sstableFiles, filepath.Join(levelPath, f.Name()))
+		}
+	}
+	if len(sstableFiles) < threshold {
+		return
+	}
+
+	mergedData := make([]byte, 0)
+	lastKeys := make([][]byte, 0)
+	for _, fpath := range sstableFiles {
+		file, _ := os.ReadFile(fpath)
+		mergedData = append(mergedData, file...) // Ovo zameniti preciznim čitanjem iz blokova + skip tombstone
+		lastKey := ExtractLastKey(fpath)         // implementirati kao funkciju koja koristi getMaximumBound
+		lastKeys = append(lastKeys, lastKey)
+		os.Remove(fpath) // delete old table
+	}
+
+	CreateCompactSSTable(mergedData, lastKeys[len(lastKeys)-1], 2, 4)
+}
+
+// Leveled kompakcija - svaka naredna leveled kompakcija je T puta veća od prethodne
+func LeveledCompaction(basePath string, level int, T int) {
+	if level >= maxLevel {
+		return
+	}
+
+	currentPath := filepath.Join(basePath, "L"+strconv.Itoa(level))
+	nextPath := filepath.Join(basePath, "L"+strconv.Itoa(level+1))
+	_ = os.MkdirAll(nextPath, 0755)
+	files, _ := os.ReadDir(currentPath)
+
+	totalSize := int64(0)
+	for _, f := range files {
+		info, _ := f.Info()
+		totalSize += info.Size()
+	}
+
+	thresholdSize := int64(T * 1024 * 1024) // 10MB ako je T=10
+	if totalSize > thresholdSize {
+		SizeTieredCompaction(currentPath, 3)
+		// REKURZIVNO IDE DALJE
+		LeveledCompaction(basePath, level+1, T)
+	}
+}
+
+func BuildBoundEntry(key string) []byte {
+	entry := make([]byte, 0)
+	entry = binary.LittleEndian.AppendUint64(entry, uint64(len(key)))
+	entry = append(entry, []byte(key)...)
+	return entry
+}
+
+func encodeElementsToBytes(elements []*Element) []byte {
+	var buf []byte
+	for _, elem := range elements {
+		key := []byte(elem.Key)
+		val := []byte(elem.Value)
+		keySize := uint64(len(key))
+		valSize := uint64(len(val))
+
+		entry := make([]byte, 0)
+		entry = binary.LittleEndian.AppendUint64(entry, uint64(elem.Timestamp))
+		if elem.Tombstone {
+			entry = append(entry, byte(1))
+			entry = binary.LittleEndian.AppendUint64(entry, keySize)
+			entry = append(entry, key...)
+		} else {
+			entry = append(entry, byte(0))
+			entry = binary.LittleEndian.AppendUint64(entry, keySize)
+			entry = binary.LittleEndian.AppendUint64(entry, valSize)
+			entry = append(entry, key...)
+			entry = append(entry, val...)
+		}
+
+		crc := crc32.ChecksumIEEE(entry)
+		full := make([]byte, 0)
+		full = binary.LittleEndian.AppendUint32(full, crc)
+		full = append(full, entry...)
+		buf = append(buf, full...)
+	}
+	return buf
+}
+
+func encodeLastKey(key string) []byte {
+	keyBytes := []byte(key)
+	keySize := uint64(len(keyBytes))
+	buf := binary.LittleEndian.AppendUint64(nil, keySize)
+	buf = append(buf, keyBytes...)
+	return buf
+}
+
+func (mt *MemoryTable) Flush() {
+	fmt.Println("Flushing memtable...")
+
+	var elements []*Element
+
+	if mt.Structure == "skiplist" {
+		skipList := mt.Data.(*SkipList)
+		elements = skipList.getAllElementsSorted()
+	} else if mt.Structure == "btree" {
+		// elements = btree.getAllElementsSorted()
+		fmt.Println("BTree flush not yet implemented")
+		return
+	}
+
+	dataBytes := encodeElementsToBytes(elements)
+
+	var lastKeyBytes []byte
+	if len(elements) > 0 {
+		lastKey := elements[len(elements)-1].Key
+		lastKeyBytes = encodeLastKey(lastKey)
+	}
+
+	summarySparsity := 2 // primer vrednosti
+	indexSparsity := 1   // primer vrednosti
+
+	CreateCompactSSTable(dataBytes, lastKeyBytes, summarySparsity, indexSparsity)
+
+	// Resetuj
+	if mt.Structure == "skiplist" {
+		mt.Data = newSkipList(16)
+	} else if mt.Structure == "btree" {
+		mt.Data = nil // init btree ovde
+	}
+	mt.CurrentSize = 0
+
+	fmt.Println("Memtable flushed and reset.")
+}
+
+func MergeEntriesWithTombstoneRemoval(lists ...[]byte) []byte {
+	merged := make(map[string][]byte)
+
+	for _, list := range lists {
+		for i := 0; i < len(list); {
+			if i+8 > len(list) {
+				break
+			}
+			keySize := binary.LittleEndian.Uint64(list[i : i+8])
+			i += 8
+			if i+int(keySize) > len(list) {
+				break
+			}
+			key := string(list[i : i+int(keySize)])
+			i += int(keySize)
+
+			if i+8 > len(list) {
+				break
+			}
+			valueSize := binary.LittleEndian.Uint64(list[i : i+8])
+			i += 8
+			if i+int(valueSize) > len(list) {
+				break
+			}
+			value := list[i : i+int(valueSize)]
+			i += int(valueSize)
+
+			if string(value) == "__TOMBSTONE__" {
+				delete(merged, key)
+			} else {
+				merged[key] = value
+			}
+		}
+	}
+
+	var result []byte
+	for k, v := range merged {
+		key := []byte(k)
+		result = binary.LittleEndian.AppendUint64(result, uint64(len(key)))
+		result = append(result, key...)
+		result = binary.LittleEndian.AppendUint64(result, uint64(len(v)))
+		result = append(result, v...)
+	}
+	return result
+}
+
+func SaveDictionaryToFile(dict *Dictionary, path string) {
+	f, _ := os.Create(path)
+	defer f.Close()
+	for k, v := range dict.EncodeMap {
+		line := fmt.Sprintf("%s:%d\n", k, v)
+		f.Write([]byte(line))
+	}
 }
