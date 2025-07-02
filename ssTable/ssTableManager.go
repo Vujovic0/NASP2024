@@ -1383,6 +1383,19 @@ func PromoteLevel(currentLevel int) string {
 }
 
 func WriteMergedSSTable(entries []*Element) {
+	var values []string
+	for _, e := range entries {
+		values = append(values, e.Value)
+	}
+
+	compressedData, dict := CompressWithDictionary(values)
+	split := bytes.Split(compressedData, []byte("|"))
+	for i, e := range entries {
+		if i < len(split) {
+			e.Value = string(split[i])
+		}
+	}
+
 	var data []byte
 	for _, e := range entries {
 		entry := initEntry(0, e.Tombstone, uint64(e.Timestamp), []byte(e.Key), []byte(e.Value))
@@ -1401,6 +1414,11 @@ func WriteMergedSSTable(entries []*Element) {
 	lastBuf = append(lastBuf, lastKeyBytes...)
 
 	CreateCompactSSTable(data, lastBuf, 2, 4)
+
+	err := SaveDictionaryToFile(dict, "data/dictionary.dict")
+	if err != nil {
+		panic("Failed to save dict: " + err.Error())
+	}
 }
 
 func CleanLevel0() {
@@ -1408,4 +1426,159 @@ func CleanLevel0() {
 	for _, f := range files {
 		os.Remove(f)
 	}
+}
+
+func ReadDecompressedValues(path string, dictPath string) ([]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	dmap, err := LoadDictionaryFromFile(dictPath)
+	if err != nil {
+		return nil, err
+	}
+
+	// Rekonstruišemo dictionary
+	dict := NewDictionary()
+	for word, code := range dmap {
+		parsed, _ := strconv.ParseUint(code, 10, 64)
+		dict.EncodeMap[word] = parsed
+		dict.DecodeMap[parsed] = word
+	}
+
+	return DecompressWithDictionary(data, dict)
+}
+func Flush(elements []Element, sstFilename string) error {
+	var values []string
+	for _, el := range elements {
+		values = append(values, el.Value)
+	}
+
+	compressedData, dict := CompressWithDictionary(values)
+	split := bytes.Split(compressedData, []byte("|"))
+	if len(split) != len(elements) {
+		return errors.New("compression mismatch with element count")
+	}
+	for i := range elements {
+		elements[i].Value = string(split[i])
+	}
+
+	var ptrElements []*Element
+	for i := range elements {
+		ptrElements = append(ptrElements, &elements[i])
+	}
+	WriteMergedSSTable(ptrElements)
+
+	dictFile := strings.Replace(sstFilename, ".sst", ".dict", 1)
+	return SaveDictionaryToFile(dict, dictFile)
+}
+
+func ReadSSTable(path string) ([]Element, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	var elements []Element
+	reader := bytes.NewReader(data)
+
+	for reader.Len() > 0 {
+		// Read size of key
+		var keySize uint64
+		if config.VariableEncoding {
+			keySize, err = binary.ReadUvarint(reader)
+		} else {
+			var fixedSize uint64
+			err = binary.Read(reader, binary.LittleEndian, &fixedSize)
+			keySize = fixedSize
+		}
+		if err != nil {
+			break
+		}
+
+		key := make([]byte, keySize)
+		_, err = reader.Read(key)
+		if err != nil {
+			break
+		}
+
+		// Read size of value
+		var valSize uint64
+		if config.VariableEncoding {
+			valSize, err = binary.ReadUvarint(reader)
+		} else {
+			var fixedValSize uint64
+			err = binary.Read(reader, binary.LittleEndian, &fixedValSize)
+			valSize = fixedValSize
+		}
+		if err != nil {
+			break
+		}
+
+		val := make([]byte, valSize)
+		_, err = reader.Read(val)
+		if err != nil {
+			break
+		}
+
+		// Read timestamp and tombstone
+		var timestamp uint64
+		err = binary.Read(reader, binary.LittleEndian, &timestamp)
+		if err != nil {
+			break
+		}
+
+		tomb := make([]byte, 1)
+		_, err = reader.Read(tomb)
+		if err != nil {
+			break
+		}
+
+		elements = append(elements, Element{
+			Key:       string(key),
+			Value:     string(val),
+			Timestamp: int64(timestamp),
+			Tombstone: tomb[0] == 1,
+		})
+	}
+
+	return elements, nil
+}
+
+func ReadSSTableWithDecompression(path string, dictPath string) ([]Element, error) {
+	entries, err := ReadSSTable(path)
+	if err != nil {
+		return nil, err
+	}
+
+	dictMap, err := LoadDictionaryFromFile(dictPath)
+	if err != nil {
+		return nil, err
+	}
+
+	decoded := make(map[uint64]string)
+	for k, v := range dictMap {
+		code, err := strconv.ParseUint(k, 10, 64)
+		if err != nil {
+			continue
+		}
+		decoded[code] = v
+	}
+
+	for i := range entries {
+		parts := strings.Split(entries[i].Value, "|")
+		var val strings.Builder
+		for _, p := range parts {
+			if len(p) == 0 {
+				continue
+			}
+			idx, _ := binary.Uvarint([]byte(p))
+			word := decoded[idx]
+			val.WriteString(word)
+		}
+		entries[i].Value = val.String()
+	}
+
+	return entries, nil
 }

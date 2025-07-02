@@ -865,7 +865,7 @@ func FlushMemoryTable(mt *memtableStructures.MemoryTable) {
 
 	if mt.Structure == "skiplist" {
 		skipList := mt.Data.(*memtableStructures.SkipList)
-		elements := convertMemtableElements(skipList.GetAllElementsSorted())			
+		elements := convertMemtableElements(skipList.GetAllElementsSorted())
 		WriteMergedSSTable(elements)
 
 	} else if mt.Structure == "btree" {
@@ -942,13 +942,4 @@ func MergeEntriesWithTombstoneRemoval(lists ...[]byte) []byte {
 		result = append(result, v...)
 	}
 	return result
-}
-
-func SaveDictionaryToFile(dict *Dictionary, path string) {
-	f, _ := os.Create(path)
-	defer f.Close()
-	for k, v := range dict.EncodeMap {
-		line := fmt.Sprintf("%s:%d\n", k, v)
-		f.Write([]byte(line))
-	}
 }

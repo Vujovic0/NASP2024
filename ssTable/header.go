@@ -13,7 +13,16 @@ type Header struct {
 	keySizeBytes   int
 	valueSizeBytes int
 	dataBlock      bool
+	Compression    CompressionType
 }
+
+type CompressionType byte
+
+const (
+	NoCompression CompressionType = iota
+	DictionaryCompression
+	VarintCompression
+)
 
 // Takes []byte where the first bytes should represent an entry header
 // If compression is on, the header size of the entry is variable
