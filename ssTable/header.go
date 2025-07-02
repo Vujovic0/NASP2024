@@ -1,7 +1,7 @@
 package ssTable
 
 import (
-	"NASP2024/config"
+	"github.com/Vujovic0/NASP2024/config"
 	"encoding/binary"
 )
 

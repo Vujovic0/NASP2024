@@ -1,17 +1,21 @@
 package ssTable
 
 import (
-	"NASP2024/blockManager"
-	"NASP2024/config"
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"hash/crc32"
+	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Vujovic0/NASP2024/blockManager"
+	"github.com/Vujovic0/NASP2024/config"
 )
 
 const (
@@ -188,8 +192,8 @@ func PrepareSSTableBlocks(filePath string, data []byte, dataBlocksCheck bool, bl
 
 func getGeneration(increment bool) uint64 {
 	var generation uint64
-
-	filePathMeta := filepath.Join("data", "metaData.bin")
+	dataPath := getDataPath()
+	filePathMeta := filepath.Join(dataPath, "metaData.bin")
 	_, err := os.Stat(filePathMeta)
 	fileExists := err == nil || !os.IsNotExist(err)
 
@@ -402,15 +406,16 @@ func getKeysType3(block *blockManager.Block, keySize uint64, valueSize uint64, t
 }
 
 // Returns index if element is found in string slice;
+// Returns index of last element that is lesser than the query
 // If element is not found and search should continue return -1;
 // If element is not found and search should not continue return -2
-func FindLastSmallerKey(key []byte, keys [][]byte) int64 {
+func FindLastSmallerKey(key []byte, keys [][]byte, dataBlock bool) int64 {
 	for i := int64(0); i < int64(len(keys)); i++ {
 		compareResult := bytes.Compare(key, keys[i])
 		if compareResult == 0 {
 			return i
 		} else if compareResult == -1 {
-			if i != 0 {
+			if i != 0 && !dataBlock {
 				return i - 1
 			} else {
 				return -2
@@ -425,12 +430,13 @@ func FindLastSmallerKey(key []byte, keys [][]byte) int64 {
 // |KEYSIZE|KEY| and it's used to check if element is out of bounds
 // Entires of data are |CRC|TIMESTAMP|TOMBSTONE|KEYSIZE|VALUESIZE|KEY|VALUE
 func CreateCompactSSTable(data []byte, lastElementData []byte, summary_sparsity int, index_sparsity int) {
-	if _, err := os.Stat("data"); os.IsNotExist(err) {
-		err := os.Mkdir("data", 0644)
+	dataPath := getDataPath()
+	if _, err := os.Stat(dataPath); os.IsNotExist(err) {
+		err := os.Mkdir(dataPath, 0644)
 		if err != nil {
 			panic(err)
 		}
-		err = os.Mkdir("data"+string(os.PathSeparator)+"L0", 0644)
+		err = os.Mkdir(dataPath+string(os.PathSeparator)+"L0", 0644)
 		if err != nil {
 			panic(err)
 		}
@@ -438,7 +444,7 @@ func CreateCompactSSTable(data []byte, lastElementData []byte, summary_sparsity 
 
 	generation := getGeneration(true)
 
-	fileName := "data" + string(os.PathSeparator) + "L0" + string(os.PathSeparator) + "usertable-" + strconv.FormatUint(uint64(generation), 10) + "-compact.bin"
+	fileName := dataPath + string(os.PathSeparator) + "L0" + string(os.PathSeparator) + "usertable-" + strconv.FormatUint(uint64(generation), 10) + "-compact.bin"
 	file, err := os.OpenFile(fileName, os.O_CREATE, 0664)
 	if err != nil {
 		panic(err)
@@ -526,7 +532,7 @@ func CreateCompactSSTable(data []byte, lastElementData []byte, summary_sparsity 
 	footerData = binary.LittleEndian.AppendUint64(footerData, summaryStart)
 	footerData = binary.LittleEndian.AppendUint64(footerData, boundStart)
 
-	var blockData []byte = make([]byte, blockSize)
+	var blockData []byte = make([]byte, 9+len(footerData))
 	copy(blockData[9:], footerData)
 	blockData[4] = 0
 	binary.LittleEndian.PutUint32(blockData[0:4], crc32.ChecksumIEEE(blockData[4:]))
@@ -540,12 +546,13 @@ func CreateCompactSSTable(data []byte, lastElementData []byte, summary_sparsity 
 // First entry of summary is |8B KEYSIZE|KEY...| and it's used to check if element is out of bounds
 // Entires of data are |CRC|TIMESTAMP|TOMBSTONE|KEYSIZE|VALUESIZE|KEY|VALUE
 func CreateSeparatedSSTable(data []byte, lastElementData []byte, summary_sparsity int, index_sparsity int) {
-	if _, err := os.Stat("data"); os.IsNotExist(err) {
-		err := os.Mkdir("data", 0644)
+	dataPath := getDataPath()
+	if _, err := os.Stat(dataPath); os.IsNotExist(err) {
+		err := os.Mkdir(dataPath, 0644)
 		if err != nil {
 			panic(err)
 		}
-		err = os.Mkdir("data"+string(os.PathSeparator)+"L0", 0644)
+		err = os.Mkdir(dataPath+string(os.PathSeparator)+"L0", 0644)
 		if err != nil {
 			panic(err)
 		}
@@ -553,7 +560,7 @@ func CreateSeparatedSSTable(data []byte, lastElementData []byte, summary_sparsit
 
 	generation := getGeneration(true)
 
-	fileName := "data" + string(os.PathSeparator) + "L0" + string(os.PathSeparator) + "usertable-" + strconv.FormatUint(uint64(generation), 10)
+	fileName := dataPath + string(os.PathSeparator) + "L0" + string(os.PathSeparator) + "usertable-" + strconv.FormatUint(uint64(generation), 10)
 	FILEDATAPATH := fileName + "-data.bin"
 	FILEINDEXPATH := fileName + "-index.bin"
 	FILESUMMARYPATH := fileName + "-summary.bin"
@@ -647,7 +654,7 @@ func CreateSeparatedSSTable(data []byte, lastElementData []byte, summary_sparsit
 	footerData = binary.LittleEndian.AppendUint64(footerData, uint64(footerStart))
 	footerData = binary.LittleEndian.AppendUint64(footerData, uint64(boundStart))
 
-	var blockData []byte = make([]byte, config.GlobalBlockSize)
+	var blockData []byte = make([]byte, 9+len(footerData))
 	copy(blockData[9:], footerData)
 	blockData[4] = 0
 	binary.LittleEndian.PutUint32(blockData[0:4], crc32.ChecksumIEEE(blockData[4:]))
@@ -676,7 +683,7 @@ func findCompact(filePath string, key []byte) ([]byte, error) {
 	var indexStart uint64
 	var summaryStart uint64
 
-	footerBlock := blockManager.ReadBlock(file, uint64(fileInfo.Size())/blockSize-1)
+	footerBlock := blockManager.ReadBlock(file, uint64(math.Ceil(float64(fileInfo.Size())/float64(blockSize))-1))
 	footerData := footerBlock.GetData()
 
 	//footerStart := binary.LittleEndian.Uint64(footerData[9:17])
@@ -734,7 +741,7 @@ func findCompact(filePath string, key []byte) ([]byte, error) {
 				panic("Error reading block")
 			}
 
-			index := FindLastSmallerKey(key, keys)
+			index := FindLastSmallerKey(key, keys, dataBlockCheck)
 			if index == -1 {
 				if dataBlockCheck {
 					blockOffset += 1
@@ -935,7 +942,7 @@ func findSeparated(filePath string, key []byte, offset uint64) ([]byte, error) {
 				panic(err)
 			}
 
-			index := FindLastSmallerKey(key, keys)
+			index := FindLastSmallerKey(key, keys, dataBlockCheck)
 			if index == -2 {
 				if dataBlockCheck {
 					return nil, nil
@@ -1085,67 +1092,56 @@ func SerializeEntryHelper(key string, value string, tombstone bool, keyOnly bool
 }
 
 // Takes key and returns the value associated with the key as a byte slice.
+// Returns [] if the key was not found
 func Find(key []byte) []byte {
-	generation := getGeneration(false)
-	levels, err := os.ReadDir("data")
-	if err != nil {
-		panic(err)
-	}
-	files := make(map[string]string)
-	for _, level := range levels {
-		if level.Name() == "metaData.bin" {
-			continue
-		}
-		filesToAppend, err := os.ReadDir("data" + string(os.PathSeparator) + level.Name())
-		if err != nil {
-			panic(err)
-		}
-		for _, file := range filesToAppend {
-			files[file.Name()] = "data" + string(os.PathSeparator) + level.Name() + string(os.PathSeparator) + file.Name()
-		}
-	}
-
+	dataPath := getDataPath()
+	fileSeparator := string(filepath.Separator)
 	var offset uint64
 	var valueBytes []byte
-
+	var err error
 	iterator := 1
-	for iterator <= int(generation) {
-		genStr := strconv.FormatUint(uint64(iterator), 10)
+	readOrder := GetReadOrder(dataPath)
+	for _, file := range readOrder {
 		iterator += 1
-		fileName := "usertable-" + genStr + "-compact.bin"
-		_, ok := files[fileName]
-		if !ok {
-			fileName = "usertable-" + genStr + "-summary.bin"
-			_, ok = files[fileName]
-			if !ok {
-				continue
+		filePathSplit := strings.Split(file, fileSeparator)
+		fileName := filePathSplit[len(filePathSplit)-1]
+		fileLevel := filePathSplit[len(filePathSplit)-2]
+		if !strings.HasSuffix(fileName, "compact.bin") {
+			filePrefix, found := strings.CutSuffix(fileName, "-data.bin")
+			if !found {
+				panic(fmt.Sprintf("wrong file suffix, expected data.bin or compact.bin, got %s", fileName))
 			}
-			valueBytes, err = findSeparated(files[fileName], key, 0)
+			fileName = filePrefix + "-summary.bin"
+			filePath := filepath.Join(dataPath, fileLevel, fileName)
+			valueBytes, err = findSeparated(filePath, key, 0)
 			if err != nil {
 				panic(err)
 			}
 			if valueBytes == nil {
 				continue
 			}
-			fileName = "usertable-" + genStr + "-index.bin"
+			fileName = filePrefix + "-index.bin"
+			filePath = filepath.Join(dataPath, fileLevel, fileName)
 
 			if !config.VariableEncoding {
 				offset = binary.LittleEndian.Uint64(valueBytes)
 			} else {
 				offset, _ = binary.Uvarint(valueBytes)
 			}
-			valueBytes, err = findSeparated(files[fileName], key, offset)
+			valueBytes, err = findSeparated(filePath, key, offset)
 			if err != nil {
 				panic(err)
 			}
 
-			fileName = "usertable-" + genStr + "-data.bin"
+			fileName = filePrefix + "-data.bin"
+			filePath = filepath.Join(dataPath, fileLevel, fileName)
+
 			if !config.VariableEncoding {
 				offset = binary.LittleEndian.Uint64(valueBytes)
 			} else {
 				offset, _ = binary.Uvarint(valueBytes)
 			}
-			valueBytes, err = findSeparated(files[fileName], key, offset)
+			valueBytes, err = findSeparated(filePath, key, offset)
 			if err != nil {
 				panic(err)
 			}
@@ -1154,7 +1150,7 @@ func Find(key []byte) []byte {
 			}
 
 		} else {
-			valueBytes, err = findCompact(files[fileName], key)
+			valueBytes, err = findCompact(file, key)
 			if err != nil {
 				panic(err)
 			}
@@ -1164,10 +1160,6 @@ func Find(key []byte) []byte {
 		}
 	}
 	return nil
-}
-
-func getReadOrder(){
-	
 }
 
 // Last element is the maximum bound for the sstable
@@ -1230,7 +1222,7 @@ func getBoundIndex(file *os.File) uint64 {
 		panic(err)
 	}
 	fileSize := fileInfo.Size()
-	footerBlockIndex := fileSize/int64(config.GlobalBlockSize) - 1
+	footerBlockIndex := math.Ceil(float64(fileSize)/float64(config.GlobalBlockSize)) - 1
 
 	footerBlock := blockManager.ReadBlock(file, uint64(footerBlockIndex))
 	data := fetchData(footerBlock)
@@ -1248,4 +1240,11 @@ func getBoundIndex(file *os.File) uint64 {
 	default:
 		panic("file doesn't have footer")
 	}
+}
+
+// returns absolute path to the /data folder regardless of where you run from
+func getDataPath() string {
+	_, currentFile, _, _ := runtime.Caller(0)
+	baseDir := filepath.Dir(currentFile) // .../ssTable
+	return filepath.Join(baseDir, "data")
 }

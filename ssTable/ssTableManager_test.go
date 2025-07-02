@@ -1,7 +1,6 @@
 package ssTable
 
 import (
-	"NASP2024/config"
 	"bytes"
 	"encoding/binary"
 	"fmt"
@@ -9,6 +8,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/Vujovic0/NASP2024/config"
 )
 
 // Helper functions

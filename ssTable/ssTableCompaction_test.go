@@ -427,6 +427,46 @@ func TestCompactionWithManyOverlappingKeys(t *testing.T) {
 	checkEqual(t, string(Find([]byte("f"))), "6", "Expected f=6 (from table 2)")
 	checkEqual(t, string(Find([]byte("g"))), "7", "Expected g=7 (from table 2)")
 	checkEqual(t, string(Find([]byte("h"))), "8", "Expected h=8 (from table 3)")
+	checkEqual(t, string(Find([]byte("z"))), "", "Expected z to not be found (non-existent key)")
+	checkEqual(t, string(Find([]byte("3"))), "", "Expected 3 to not be found (non-existent key)")
+	checkEqual(t, string(Find([]byte("c1"))), "", "Expected c1 to not be found (non-existent key)")
+	checkEqual(t, string(Find([]byte("abcde"))), "", "Expected abcde to not be found (non-existent key)")
+}
+
+func TestCompactionNewerKeysOverrideOlder(t *testing.T) {
+	os.RemoveAll("data")
+
+	// Table 1: older values
+	data1 := []byte{}
+	data1 = append(data1, SerializeEntryHelper("key1", "old_value1", false, false)...)
+	data1 = append(data1, SerializeEntryHelper("key2", "old_value2", false, false)...)
+	last1 := SerializeEntryHelper("key2", "", false, true)
+	CreateSeparatedSSTable(data1, last1, 2, 2)
+
+	// Wait a bit so next SSTable has newer timestamps
+	time.Sleep(1 * time.Second)
+
+	// Table 2: newer values overwrite some keys
+	data2 := []byte{}
+	data2 = append(data2, SerializeEntryHelper("key1", "new_value1", false, false)...)
+	data2 = append(data2, SerializeEntryHelper("key3", "new_value3", false, false)...)
+	last2 := SerializeEntryHelper("key3", "", false, true)
+	CreateSeparatedSSTable(data2, last2, 2, 2)
+
+	files := openAllDataFiles(t)
+	folderPath := filepath.Join("data", "L1")
+	os.Mkdir(folderPath, 0755)
+	newFilePath := filepath.Join("data", "L1", "usertable-3-compact.bin")
+	MergeTables(files, newFilePath)
+
+	time.Sleep(1 * time.Second)
+	CreateSeparatedSSTable(data1, last1, 2, 2)
+
+	// Verify that after compaction, Find returns newest values
+	checkEqual(t, string(Find([]byte("key1"))), "old_value1", "Expected key1 to have older value")
+	checkEqual(t, string(Find([]byte("key2"))), "old_value2", "Expected key2 to keep old value (no overwrite)")
+	checkEqual(t, string(Find([]byte("key3"))), "new_value3", "Expected key3 to have new value")
+	cleanUpOldFiles(t, files)
 }
 
 func openAllDataFiles(t *testing.T) []*os.File {
