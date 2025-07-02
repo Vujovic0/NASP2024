@@ -135,7 +135,7 @@ func getTableNames(levelPath string) []string {
 }
 
 /*
-Path relative to caller's package
+Returns a slice of filepaths for the correct search order of sstables
 */
 func GetReadOrder(dataPath string) []string {
 	levels := getLevelNames(dataPath)

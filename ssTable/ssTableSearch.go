@@ -14,14 +14,14 @@ import (
 	"github.com/Vujovic0/NASP2024/config"
 )
 
-func findCompact(filePath string, key []byte) ([]byte, error) {
+func findCompact(filePath string, key []byte) ([]byte, uint64, error) {
 	if filePath[len(filePath)-11:] != "compact.bin" {
 		panic("Error: findCompact only works on compact sstables")
 	}
 
 	file, err := os.OpenFile(filePath, os.O_RDONLY, 0644)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer file.Close()
 
@@ -36,21 +36,20 @@ func findCompact(filePath string, key []byte) ([]byte, error) {
 	footerBlock := blockManager.ReadBlock(file, uint64(math.Ceil(float64(fileInfo.Size())/float64(blockSize))-1))
 	footerData := footerBlock.GetData()
 
-	//footerStart := binary.LittleEndian.Uint64(footerData[9:17])
 	indexStart = binary.LittleEndian.Uint64(footerData[17:25])
 	summaryStart = binary.LittleEndian.Uint64(footerData[25:33])
+
 	maximumBound, err := getMaximumBound(file)
-	boundIndex := getBoundIndex(file)
 	if err != nil {
 		panic(err)
 	}
+	boundIndex := getBoundIndex(file)
 
 	if bytes.Compare(maximumBound, key) == -1 {
-		return nil, nil
+		return nil, 0, nil
 	}
 
 	var blockOffset uint64 = summaryStart
-
 	var dataBlockCheck bool = false
 	var keys [][]byte
 	var values [][]byte
@@ -62,6 +61,7 @@ func findCompact(filePath string, key []byte) ([]byte, error) {
 	var keySizeLeft uint64
 	var tombstone bool
 	var lastValue []byte = nil
+	var lastEntryOffset uint64 = 0
 
 	for {
 		if blockOffset == boundIndex {
@@ -82,10 +82,15 @@ func findCompact(filePath string, key []byte) ([]byte, error) {
 				break
 			}
 		}
+
+		entryBlockOffset := blockOffset
 		block := blockManager.ReadBlock(file, blockOffset)
 		if block == nil {
 			break
-		} else if block.GetType() == 0 {
+		}
+
+		switch block.GetType() {
+		case 0:
 			keys, values, err = getKeysType0(block, dataBlockCheck, boundIndex)
 			if err != nil {
 				panic("Error reading block")
@@ -94,10 +99,10 @@ func findCompact(filePath string, key []byte) ([]byte, error) {
 			index := FindLastSmallerKey(key, keys, dataBlockCheck)
 			if index == -1 {
 				if dataBlockCheck {
-					blockOffset += 1
+					blockOffset++
 					continue
 				}
-				currentSection += 1
+				currentSection++
 				if !config.VariableEncoding {
 					blockOffset = binary.LittleEndian.Uint64(values[len(values)-1])
 				} else {
@@ -106,21 +111,14 @@ func findCompact(filePath string, key []byte) ([]byte, error) {
 				continue
 			} else if index == -2 {
 				if dataBlockCheck {
-					return nil, nil
+					return nil, 0, nil
 				}
 				if lastValue == nil {
-					return nil, nil
+					return nil, 0, nil
 				}
-				if !config.VariableEncoding {
-					blockOffset = binary.LittleEndian.Uint64(lastValue)
-				} else {
-					blockOffset, _ = binary.Uvarint(lastValue)
-				}
-				currentSection += 1
-				lastValue = nil
-				continue
+				return lastValue, lastEntryOffset, nil
 			} else if dataBlockCheck {
-				return values[index], nil
+				return values[index], entryBlockOffset, nil
 			}
 
 			if !config.VariableEncoding {
@@ -128,55 +126,52 @@ func findCompact(filePath string, key []byte) ([]byte, error) {
 			} else {
 				blockOffset, _ = binary.Uvarint(values[index])
 			}
-			currentSection += 1
+			currentSection++
 			lastValue = nil
 			continue
 
-		} else if block.GetType() == 1 {
+		case 1:
 			keyBytes, valueBytes, keySizeLeft, valueSizeLeft, err = getKeysType1(block, dataBlockCheck, boundIndex)
 			if err != nil {
 				panic(err)
 			}
 
 			if dataBlockCheck {
-				if len(valueBytes) == 0 && valueSizeLeft == 0 {
-					tombstone = true
-				} else {
-					tombstone = false
-				}
+				tombstone = len(valueBytes) == 0 && valueSizeLeft == 0
 			}
-			blockOffset += 1
-		} else if block.GetType() == 2 {
+			blockOffset++
+
+		case 2:
 			keyBytesToAppend, valueBytesToAppend, keySizeLeftNew, valueSizeLeftNew, err := getKeysType2(block, keySizeLeft, valueSizeLeft, tombstone, dataBlockCheck)
 			if err != nil {
 				panic(err)
 			}
-
 			keyBytes = append(keyBytes, keyBytesToAppend...)
 			valueBytes = append(valueBytes, valueBytesToAppend...)
 			keySizeLeft = keySizeLeftNew
 			valueSizeLeft = valueSizeLeftNew
-			blockOffset += 1
-		} else if block.GetType() == 3 {
+			blockOffset++
+
+		case 3:
 			keyBytesToAppend, valueBytesToAppend, err := getKeysType3(block, keySizeLeft, valueSizeLeft, tombstone, dataBlockCheck)
 			if err != nil {
 				panic(err)
 			}
-
 			keyBytes = append(keyBytes, keyBytesToAppend...)
 			valueBytes = append(valueBytes, valueBytesToAppend...)
 
 			compareResult := bytes.Compare(keyBytes, key)
+
 			if compareResult == 0 {
 				if dataBlockCheck {
-					return valueBytes, nil
+					return valueBytes, entryBlockOffset, nil
 				}
 				if !config.VariableEncoding {
 					blockOffset = binary.LittleEndian.Uint64(valueBytes)
 				} else {
 					blockOffset, _ = binary.Uvarint(valueBytes)
 				}
-				currentSection += 1
+				currentSection++
 
 				lastValue = nil
 				keyBytes = keyBytes[:0]
@@ -185,34 +180,22 @@ func findCompact(filePath string, key []byte) ([]byte, error) {
 				valueSizeLeft = 0
 				tombstone = false
 				continue
+
 			} else if compareResult > 0 {
 				if dataBlockCheck {
-					return nil, nil
+					return nil, 0, nil
 				}
 				if lastValue == nil {
-					return nil, nil
+					return nil, 0, nil
 				}
-				if !config.VariableEncoding {
-					blockOffset = binary.LittleEndian.Uint64(lastValue)
-				} else {
-					blockOffset, _ = binary.Uvarint(lastValue)
-				}
-				currentSection += 1
-
-				lastValue = nil
-				keyBytes = keyBytes[:0]
-				valueBytes = valueBytes[:0]
-				keySizeLeft = 0
-				valueSizeLeft = 0
-				tombstone = false
-				continue
+				return lastValue, lastEntryOffset, nil
 			} else if compareResult < 0 && !dataBlockCheck {
 				if !config.VariableEncoding {
 					blockOffset = binary.LittleEndian.Uint64(valueBytes)
 				} else {
 					blockOffset, _ = binary.Uvarint(valueBytes)
 				}
-				currentSection += 1
+				currentSection++
 
 				lastValue = nil
 				keyBytes = keyBytes[:0]
@@ -222,8 +205,11 @@ func findCompact(filePath string, key []byte) ([]byte, error) {
 				tombstone = false
 				continue
 			}
-			blockOffset += 1
+
 			lastValue = valueBytes
+			lastEntryOffset = entryBlockOffset
+
+			blockOffset++
 			keyBytes = keyBytes[:0]
 			valueBytes = valueBytes[:0]
 			keySizeLeft = 0
@@ -232,16 +218,16 @@ func findCompact(filePath string, key []byte) ([]byte, error) {
 		}
 	}
 
-	return nil, nil
+	return nil, 0, nil
 }
 
 // When matching key is found, returns its value
 // If key stops being larger than comparing key, return value of last key
 // Returns nil if not found
-func findSeparated(filePath string, key []byte, offset uint64) ([]byte, error) {
+func findSeparated(filePath string, key []byte, offset uint64) ([]byte, uint64, error) {
 	file, err := os.OpenFile(filePath, os.O_RDONLY, 0644)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer file.Close()
 
@@ -250,7 +236,6 @@ func findSeparated(filePath string, key []byte, offset uint64) ([]byte, error) {
 
 	var keys [][]byte = make([][]byte, 0)
 	var keyBytes []byte = make([]byte, 0)
-
 	var valueBytes []byte = make([]byte, 0)
 	var values [][]byte = make([][]byte, 0)
 	var lastValue []byte = make([]byte, 0)
@@ -259,6 +244,8 @@ func findSeparated(filePath string, key []byte, offset uint64) ([]byte, error) {
 	var valueSizeLeft uint64 = 0
 
 	var boundIndex uint64 = 0
+	var entryBlockOffset uint64 = 0
+	var lastEntryOffset uint64 = 0 // <== NEW: track actual match block offset
 
 	fileType := filePath[len(filePath)-11:]
 	if fileType == "summary.bin" {
@@ -266,12 +253,12 @@ func findSeparated(filePath string, key []byte, offset uint64) ([]byte, error) {
 		if err != nil {
 			panic(err)
 		}
-
 		if bytes.Compare(maximumBound, key) < 0 {
-			return nil, nil
+			return nil, 0, nil
 		}
 		boundIndex = getBoundIndex(file)
 	}
+
 	var blockOffset uint64 = offset
 
 	for {
@@ -281,160 +268,175 @@ func findSeparated(filePath string, key []byte, offset uint64) ([]byte, error) {
 			dataBlockCheck = false
 		}
 		if boundIndex != 0 && boundIndex == blockOffset {
-			return lastValue, nil
+			return lastValue, lastEntryOffset, nil
 		}
+
 		block := blockManager.ReadBlock(file, blockOffset)
 		if block == nil {
 			break
-		} else if block.GetType() == 0 {
+		}
+		entryBlockOffset = block.GetOffset() // always set current block offset
+
+		switch block.GetType() {
+		case 0:
 			keys, values, err = getKeysType0(block, dataBlockCheck, boundIndex)
 			if err != nil {
 				panic(err)
 			}
-
 			index := FindLastSmallerKey(key, keys, dataBlockCheck)
-			if index == -2 {
+			switch index {
+			case -2:
 				if dataBlockCheck {
-					return nil, nil
+					return nil, 0, nil
 				}
 				if len(lastValue) == 0 {
-					return nil, nil
+					return nil, 0, nil
 				}
-				return lastValue, nil
+				return lastValue, lastEntryOffset, nil
+			case -1:
+				lastValue = values[len(values)-1]
+				lastEntryOffset = entryBlockOffset // track last value's offset
+			default:
+				return values[index], entryBlockOffset, nil // return current offset on match
 			}
-			if index != -1 {
-				return values[index], nil
-			}
-			lastValue = values[len(values)-1]
-
-		} else if block.GetType() == 1 {
+		case 1:
 			keyBytes, valueBytes, keySizeLeft, valueSizeLeft, err = getKeysType1(block, dataBlockCheck, boundIndex)
 			if err != nil {
 				panic(err)
 			}
-
 			if dataBlockCheck {
-				if len(valueBytes) == 0 && valueSizeLeft == 0 {
-					tombstone = true
-				} else {
-					tombstone = false
-				}
+				tombstone = len(valueBytes) == 0 && valueSizeLeft == 0
 			}
 
-		} else if block.GetType() == 2 {
+		case 2:
 			keyBytesToAppend, valueBytesToAppend, keySizeLeftNew, valueSizeLeftNew, err := getKeysType2(block, keySizeLeft, valueSizeLeft, tombstone, dataBlockCheck)
 			if err != nil {
 				panic(err)
 			}
-
 			keyBytes = append(keyBytes, keyBytesToAppend...)
 			valueBytes = append(valueBytes, valueBytesToAppend...)
 			keySizeLeft = keySizeLeftNew
 			valueSizeLeft = valueSizeLeftNew
-		} else if block.GetType() == 3 {
+
+		case 3:
 			keyBytesToAppend, valueBytesToAppend, err := getKeysType3(block, keySizeLeft, valueSizeLeft, tombstone, dataBlockCheck)
 			if err != nil {
 				panic(err)
 			}
-
 			keyBytes = append(keyBytes, keyBytesToAppend...)
 			valueBytes = append(valueBytes, valueBytesToAppend...)
 
 			compareResult := bytes.Compare(keyBytes, key)
-
 			if compareResult == 0 {
-				return valueBytes, nil
+				return valueBytes, entryBlockOffset, nil // exact match
 			} else if compareResult > 0 {
 				if dataBlockCheck {
-					return nil, nil
+					return nil, 0, nil
 				}
 				if len(lastValue) == 0 {
-					return nil, nil
+					return nil, 0, nil
 				}
-				return lastValue, nil
+				return lastValue, lastEntryOffset, nil // return offset of last value
 			}
 			lastValue = valueBytes
+			lastEntryOffset = entryBlockOffset // track last value's offset
+
 			keyBytes = keyBytes[:0]
 			valueBytes = valueBytes[:0]
 			keySizeLeft = 0
 			valueSizeLeft = 0
 			tombstone = false
 		}
-		blockOffset += 1
+		blockOffset++
 	}
-
-	return lastValue, nil
+	return lastValue, lastEntryOffset, nil
 }
 
 // Takes key and returns the value associated with the key as a byte slice.
 // Returns [] if the key was not found
-func Find(key []byte) []byte {
+func SearchAll(key []byte) []byte {
+	dataPath := getDataPath()
+	iterator := 1
+	readOrder := GetReadOrder(dataPath)
+	for _, filePath := range readOrder {
+		iterator += 1
+		valueBytes, _ := SearchOne(filePath, key)
+		if valueBytes != nil {
+			return valueBytes
+		}
+	}
+	return nil
+}
+
+// Takes filepath of an ssTable and the key it should search for
+// Returns the value of that key
+// Return value will be empty slice if the entry found was tombstoned
+// If the entry was not found return is nil, 0
+func SearchOne(filePath string, key []byte) ([]byte, uint64) {
 	dataPath := getDataPath()
 	fileSeparator := string(filepath.Separator)
 	var offset uint64
 	var valueBytes []byte
 	var err error
-	iterator := 1
-	readOrder := GetReadOrder(dataPath)
-	for _, file := range readOrder {
-		iterator += 1
-		filePathSplit := strings.Split(file, fileSeparator)
-		fileName := filePathSplit[len(filePathSplit)-1]
-		fileLevel := filePathSplit[len(filePathSplit)-2]
-		if !strings.HasSuffix(fileName, "compact.bin") {
-			filePrefix, found := strings.CutSuffix(fileName, "-data.bin")
-			if !found {
-				panic(fmt.Sprintf("wrong file suffix, expected data.bin or compact.bin, got %s", fileName))
-			}
-			fileName = filePrefix + "-summary.bin"
-			filePath := filepath.Join(dataPath, fileLevel, fileName)
-			valueBytes, err = findSeparated(filePath, key, 0)
-			if err != nil {
-				panic(err)
-			}
-			if valueBytes == nil {
-				continue
-			}
-			fileName = filePrefix + "-index.bin"
-			filePath = filepath.Join(dataPath, fileLevel, fileName)
+	var entryOffset uint64 = 0
 
-			if !config.VariableEncoding {
-				offset = binary.LittleEndian.Uint64(valueBytes)
-			} else {
-				offset, _ = binary.Uvarint(valueBytes)
-			}
-			valueBytes, err = findSeparated(filePath, key, offset)
-			if err != nil {
-				panic(err)
-			}
+	filePathSplit := strings.Split(filePath, fileSeparator)
+	fileName := filePathSplit[len(filePathSplit)-1]
+	fileLevel := filePathSplit[len(filePathSplit)-2]
 
-			fileName = filePrefix + "-data.bin"
-			filePath = filepath.Join(dataPath, fileLevel, fileName)
+	if !strings.HasSuffix(fileName, "compact.bin") {
+		filePrefix, found := strings.CutSuffix(fileName, "-data.bin")
+		if !found {
+			panic(fmt.Sprintf("wrong file suffix, expected data.bin or compact.bin, got %s", fileName))
+		}
+		fileName = filePrefix + "-summary.bin"
+		filePath := filepath.Join(dataPath, fileLevel, fileName)
+		valueBytes, _, err = findSeparated(filePath, key, 0)
+		if err != nil {
+			panic(err)
+		}
+		if valueBytes == nil {
+			return nil, 0
+		}
+		fileName = filePrefix + "-index.bin"
+		filePath = filepath.Join(dataPath, fileLevel, fileName)
 
-			if !config.VariableEncoding {
-				offset = binary.LittleEndian.Uint64(valueBytes)
-			} else {
-				offset, _ = binary.Uvarint(valueBytes)
-			}
-			valueBytes, err = findSeparated(filePath, key, offset)
-			if err != nil {
-				panic(err)
-			}
-			if valueBytes != nil {
-				return valueBytes
-			}
-
+		if !config.VariableEncoding {
+			offset = binary.LittleEndian.Uint64(valueBytes)
 		} else {
-			valueBytes, err = findCompact(file, key)
-			if err != nil {
-				panic(err)
-			}
-			if valueBytes != nil {
-				return valueBytes
-			}
+			offset, _ = binary.Uvarint(valueBytes)
+		}
+		valueBytes, _, err = findSeparated(filePath, key, offset)
+		if err != nil {
+			panic(err)
+		}
+
+		fileName = filePrefix + "-data.bin"
+		filePath = filepath.Join(dataPath, fileLevel, fileName)
+
+		if !config.VariableEncoding {
+			offset = binary.LittleEndian.Uint64(valueBytes)
+		} else {
+			offset, _ = binary.Uvarint(valueBytes)
+		}
+		valueBytes, entryOffset, err = findSeparated(filePath, key, offset)
+		if err != nil {
+			panic(err)
+		}
+		if valueBytes != nil {
+			return valueBytes, entryOffset
+		}
+	} else {
+		valueBytes, entryOffset, err = findCompact(filePath, key)
+		if err != nil {
+			panic(err)
+		}
+		if valueBytes != nil {
+			return valueBytes, entryOffset
 		}
 	}
-	return nil
+
+	return nil, 0
 }
 
 // Last element is the maximum bound for the sstable

@@ -128,7 +128,7 @@ func TestBasicWriteAndRead(t *testing.T) {
 	// Test separated SSTable
 	t.Run("Separated SSTable", func(t *testing.T) {
 		CreateSeparatedSSTable(data, lastKeyData, 1, 1)
-		result := Find([]byte(key))
+		result := SearchAll([]byte(key))
 		checkNotNil(t, result, "Should find value in separated SSTable")
 		checkEqual(t, string(result), value, "Incorrect value in separated SSTable")
 	})
@@ -136,7 +136,7 @@ func TestBasicWriteAndRead(t *testing.T) {
 	// Test compact SSTable
 	t.Run("Compact SSTable", func(t *testing.T) {
 		CreateCompactSSTable(data, lastKeyData, 1, 1)
-		result := Find([]byte(key))
+		result := SearchAll([]byte(key))
 		checkNotNil(t, result, "Should find value in compact SSTable")
 		checkEqual(t, string(result), value, "Incorrect value in compact SSTable")
 	})
@@ -150,7 +150,7 @@ func TestTombstoneHandlingSeparated(t *testing.T) {
 	lastKeyData := SerializeEntryHelper(key, "", true, true)
 
 	CreateSeparatedSSTable(data, lastKeyData, 1, 1)
-	result := Find([]byte(key))
+	result := SearchAll([]byte(key))
 
 	// Check that the result is an empty slice instead of nil
 	if result == nil || len(result) != 0 {
@@ -166,7 +166,7 @@ func TestTombstoneHandlingCompact(t *testing.T) {
 	lastKeyData := SerializeEntryHelper(key, "", true, true)
 
 	CreateCompactSSTable(data, lastKeyData, 1, 1)
-	result := Find([]byte(key))
+	result := SearchAll([]byte(key))
 
 	// Check that the result is an empty slice instead of nil
 	if result == nil || len(result) != 0 {
@@ -191,7 +191,7 @@ func TestFindMultiBlockEntriesCompact(t *testing.T) {
 	t.Run("RandomAccess", func(t *testing.T) {
 		for i := 0; i < 10; i++ {
 			testKey := fmt.Sprintf("key%04d", i)
-			result := Find([]byte(testKey))
+			result := SearchAll([]byte(testKey))
 			checkNotNil(t, result, "Missing value for "+testKey)
 			checkEqual(t, len(result), int(blockSize)*2, "Incorrect value length")
 		}
@@ -214,7 +214,7 @@ func TestFindMultiBlockEntriesSeparated(t *testing.T) {
 	t.Run("RandomAccess", func(t *testing.T) {
 		for i := 0; i < 10; i++ {
 			testKey := fmt.Sprintf("key%04d", i)
-			result := Find([]byte(testKey))
+			result := SearchAll([]byte(testKey))
 			checkNotNil(t, result, "Missing value for "+testKey)
 			checkEqual(t, len(result), int(blockSize)*2, "Incorrect value length")
 		}
@@ -247,7 +247,7 @@ func TestFindNonExistentKeys(t *testing.T) {
 
 	t.Run("Compact SSTable", func(t *testing.T) {
 		for _, tc := range testCases {
-			result := Find([]byte(tc.key))
+			result := SearchAll([]byte(tc.key))
 			if result != nil && len(result) != 0 {
 				t.Errorf("Compact - %s: expected nil or empty, got: %v", tc.name, result)
 			}
@@ -256,7 +256,7 @@ func TestFindNonExistentKeys(t *testing.T) {
 
 	t.Run("Separated SSTable", func(t *testing.T) {
 		for _, tc := range testCases {
-			result := Find([]byte(tc.key))
+			result := SearchAll([]byte(tc.key))
 			if result != nil && len(result) != 0 {
 				t.Errorf("Separated - %s: expected nil or empty, got: %v", tc.name, result)
 			}
@@ -283,7 +283,7 @@ func TestMultipleKeysInBlock0(t *testing.T) {
 
 	t.Run("Compact SSTable", func(t *testing.T) {
 		for i, key := range keys {
-			result := Find([]byte(key))
+			result := SearchAll([]byte(key))
 			checkNotNil(t, result, "Compact: missing result for "+key)
 			checkEqual(t, string(result), values[i], "Compact: wrong value for "+key)
 		}
@@ -291,7 +291,7 @@ func TestMultipleKeysInBlock0(t *testing.T) {
 
 	t.Run("Separated SSTable", func(t *testing.T) {
 		for i, key := range keys {
-			result := Find([]byte(key))
+			result := SearchAll([]byte(key))
 			checkNotNil(t, result, "Separated: missing result for "+key)
 			checkEqual(t, string(result), values[i], "Separated: wrong value for "+key)
 		}
@@ -314,7 +314,7 @@ func TestFindFullBlockEntriesCompact(t *testing.T) {
 	t.Run("RandomAccess", func(t *testing.T) {
 		for i := 0; i < 10; i++ {
 			testKey := fmt.Sprintf("key%04d", i)
-			result := Find([]byte(testKey))
+			result := SearchAll([]byte(testKey))
 			checkNotNil(t, result, "Missing value for "+testKey)
 			checkEqual(t, len(result), 1, "Incorrect value length")
 		}
@@ -348,13 +348,13 @@ func TestSearchThroughManyTables(t *testing.T) {
 
 	t.Run("Many SSTables", func(t *testing.T) {
 		for i, key := range keys1 {
-			result := Find([]byte(key))
+			result := SearchAll([]byte(key))
 			checkNotNil(t, result, "Compact: missing result for "+key)
 			checkEqual(t, string(result), values1[i], "Compact: wrong value for "+key)
 		}
 
 		for i, key := range keys2 {
-			result := Find([]byte(key))
+			result := SearchAll([]byte(key))
 			checkNotNil(t, result, "Compact: missing result for "+key)
 			checkEqual(t, string(result), values2[i], "Compact: wrong value for "+key)
 		}
@@ -373,7 +373,7 @@ func TestLargeKeyTombstoneCompact(t *testing.T) {
 	CreateCompactSSTable(data, lastKeyData, 1, 1)
 
 	t.Run("DeletedLargeKey", func(t *testing.T) {
-		result := Find([]byte(largeKey))
+		result := SearchAll([]byte(largeKey))
 		if result == nil || len(result) != 0 {
 			t.Errorf("Expected an empty slice for large tombstoned key, got: %v", result)
 		}
@@ -392,7 +392,7 @@ func TestLargeKeyTombstoneSeparate(t *testing.T) {
 	CreateSeparatedSSTable(data, lastKeyData, 1, 1)
 
 	t.Run("DeletedLargeKey", func(t *testing.T) {
-		result := Find([]byte(largeKey))
+		result := SearchAll([]byte(largeKey))
 		if result == nil || len(result) != 0 {
 			t.Errorf("Expected an empty slice for large tombstoned key, got: %v", result)
 		}
@@ -421,7 +421,7 @@ func TestTombstoneOverridesEarlierValues(t *testing.T) {
 
 	// Check that the key is now treated as deleted
 	t.Run("TombstoneTakesPrecedence", func(t *testing.T) {
-		result := Find([]byte(key))
+		result := SearchAll([]byte(key))
 		if result == nil || len(result) != 0 {
 			t.Errorf("Expected empty slice (deleted key), got: %v", result)
 		}

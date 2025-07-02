@@ -7,9 +7,14 @@ import (
 	"github.com/Vujovic0/NASP2024/config"
 )
 
-// Returns a slice of keys and their values in bytes of a full block.
+// Returns a byte slice of keys and their values of a full block.
+//
 // DataBlockCheck is true when reading from a data segment in sstable because entries
 // in summary and index don't have CRC, timestamp and tombstone
+//
+// Summarybound is 0 when reading from non-summary segment.
+// In another case it is an offset where the max element of the summary starts
+//
 // If value of an entry is an empty slice, it means that the tombstone is set to 1
 func getKeysType0(block *blockManager.Block, dataBlockCheck bool, summaryBound uint64) ([][]byte, [][]byte, error) {
 	firstSummaryBlock := false
