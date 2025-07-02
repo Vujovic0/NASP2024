@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -170,4 +171,11 @@ func getTablePaths(levelPath string, tableNames []string) []string {
 	}
 
 	return tablePaths
+}
+
+// returns absolute path to the /data folder regardless of where you run from
+func getDataPath() string {
+	_, currentFile, _, _ := runtime.Caller(0)
+	baseDir := filepath.Dir(currentFile) // .../ssTable
+	return filepath.Join(baseDir, "data")
 }
