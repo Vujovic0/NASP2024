@@ -14,7 +14,7 @@ import (
 	"github.com/Vujovic0/NASP2024/config"
 )
 
-func findCompact(filePath string, key []byte) ([]byte, uint64, error) {
+func searchCompact(filePath string, key []byte, prefix bool) ([]byte, uint64, error) {
 	if filePath[len(filePath)-11:] != "compact.bin" {
 		panic("Error: findCompact only works on compact sstables")
 	}
@@ -96,7 +96,7 @@ func findCompact(filePath string, key []byte) ([]byte, uint64, error) {
 				panic("Error reading block")
 			}
 
-			index := FindLastSmallerKey(key, keys, dataBlockCheck)
+			index := FindLastSmallerKey(key, keys, dataBlockCheck, prefix)
 			if index == -1 {
 				if dataBlockCheck {
 					blockOffset++
@@ -160,7 +160,17 @@ func findCompact(filePath string, key []byte) ([]byte, uint64, error) {
 			keyBytes = append(keyBytes, keyBytesToAppend...)
 			valueBytes = append(valueBytes, valueBytesToAppend...)
 
-			compareResult := bytes.Compare(keyBytes, key)
+			var compareResult int
+			if prefix {
+				prefixFlag := bytes.HasPrefix(keyBytes, key)
+				if prefixFlag {
+					compareResult = 0
+				} else {
+					compareResult = bytes.Compare(keyBytes, key)
+				}
+			} else {
+				compareResult = bytes.Compare(keyBytes, key)
+			}
 
 			if compareResult == 0 {
 				if dataBlockCheck {
@@ -224,7 +234,7 @@ func findCompact(filePath string, key []byte) ([]byte, uint64, error) {
 // When matching key is found, returns its value
 // If key stops being larger than comparing key, return value of last key
 // Returns nil if not found
-func findSeparated(filePath string, key []byte, offset uint64) ([]byte, uint64, error) {
+func searchSeparated(filePath string, key []byte, offset uint64, prefix bool) ([]byte, uint64, error) {
 	file, err := os.OpenFile(filePath, os.O_RDONLY, 0644)
 	if err != nil {
 		return nil, 0, err
@@ -283,7 +293,7 @@ func findSeparated(filePath string, key []byte, offset uint64) ([]byte, uint64, 
 			if err != nil {
 				panic(err)
 			}
-			index := FindLastSmallerKey(key, keys, dataBlockCheck)
+			index := FindLastSmallerKey(key, keys, dataBlockCheck, prefix)
 			switch index {
 			case -2:
 				if dataBlockCheck {
@@ -326,7 +336,18 @@ func findSeparated(filePath string, key []byte, offset uint64) ([]byte, uint64, 
 			keyBytes = append(keyBytes, keyBytesToAppend...)
 			valueBytes = append(valueBytes, valueBytesToAppend...)
 
-			compareResult := bytes.Compare(keyBytes, key)
+			var compareResult int
+			if prefix {
+				prefixFlag := bytes.HasPrefix(keyBytes, key)
+				if prefixFlag {
+					compareResult = 0
+				} else {
+					compareResult = bytes.Compare(keyBytes, key)
+				}
+			} else {
+				compareResult = bytes.Compare(keyBytes, key)
+			}
+
 			if compareResult == 0 {
 				return valueBytes, entryBlockOffset, nil // exact match
 			} else if compareResult > 0 {
@@ -354,13 +375,13 @@ func findSeparated(filePath string, key []byte, offset uint64) ([]byte, uint64, 
 
 // Takes key and returns the value associated with the key as a byte slice.
 // Returns [] if the key was not found
-func SearchAll(key []byte) []byte {
+func SearchAll(key []byte, prefix bool) []byte {
 	dataPath := getDataPath()
 	iterator := 1
 	readOrder := GetReadOrder(dataPath)
 	for _, filePath := range readOrder {
 		iterator += 1
-		valueBytes, _ := SearchOne(filePath, key)
+		valueBytes, _ := SearchOne(filePath, key, prefix)
 		if valueBytes != nil {
 			return valueBytes
 		}
@@ -372,7 +393,7 @@ func SearchAll(key []byte) []byte {
 // Returns the value of that key
 // Return value will be empty slice if the entry found was tombstoned
 // If the entry was not found return is nil, 0
-func SearchOne(filePath string, key []byte) ([]byte, uint64) {
+func SearchOne(filePath string, key []byte, prefix bool) ([]byte, uint64) {
 	dataPath := getDataPath()
 	fileSeparator := string(filepath.Separator)
 	var offset uint64
@@ -391,7 +412,7 @@ func SearchOne(filePath string, key []byte) ([]byte, uint64) {
 		}
 		fileName = filePrefix + "-summary.bin"
 		filePath := filepath.Join(dataPath, fileLevel, fileName)
-		valueBytes, _, err = findSeparated(filePath, key, 0)
+		valueBytes, _, err = searchSeparated(filePath, key, 0, prefix)
 		if err != nil {
 			panic(err)
 		}
@@ -406,7 +427,7 @@ func SearchOne(filePath string, key []byte) ([]byte, uint64) {
 		} else {
 			offset, _ = binary.Uvarint(valueBytes)
 		}
-		valueBytes, _, err = findSeparated(filePath, key, offset)
+		valueBytes, _, err = searchSeparated(filePath, key, offset, prefix)
 		if err != nil {
 			panic(err)
 		}
@@ -419,7 +440,7 @@ func SearchOne(filePath string, key []byte) ([]byte, uint64) {
 		} else {
 			offset, _ = binary.Uvarint(valueBytes)
 		}
-		valueBytes, entryOffset, err = findSeparated(filePath, key, offset)
+		valueBytes, entryOffset, err = searchSeparated(filePath, key, offset, prefix)
 		if err != nil {
 			panic(err)
 		}
@@ -427,7 +448,7 @@ func SearchOne(filePath string, key []byte) ([]byte, uint64) {
 			return valueBytes, entryOffset
 		}
 	} else {
-		valueBytes, entryOffset, err = findCompact(filePath, key)
+		valueBytes, entryOffset, err = searchCompact(filePath, key, prefix)
 		if err != nil {
 			panic(err)
 		}
@@ -523,15 +544,27 @@ func getBoundIndex(file *os.File) uint64 {
 // Returns index of last element that is lesser than the query
 // If element is not found and search should continue return -1;
 // If element is not found and search should not continue return -2
-func FindLastSmallerKey(key []byte, keys [][]byte, dataBlock bool) int64 {
+func FindLastSmallerKey(key []byte, keys [][]byte, dataBlock bool, prefix bool) int64 {
 	for i := int64(0); i < int64(len(keys)); i++ {
-		compareResult := bytes.Compare(key, keys[i])
-		if compareResult == 0 {
+		if prefix {
+			prefixFlag := bytes.HasPrefix(keys[i], key)
+			if prefixFlag {
+				return i
+			}
+		}
+
+		result := bytes.Compare(key, keys[i])
+		if result == 0 {
 			return i
-		} else if compareResult == -1 {
-			if i != 0 && !dataBlock {
-				return i - 1
+		} else if result < 0 {
+			if i != 0 {
+				if !dataBlock {
+					return i - 1
+				} else {
+					return -2
+				}
 			} else {
+				// this can only happen when checking with the first key in segment
 				return -2
 			}
 		}

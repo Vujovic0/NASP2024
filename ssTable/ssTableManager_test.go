@@ -128,7 +128,7 @@ func TestBasicWriteAndRead(t *testing.T) {
 	// Test separated SSTable
 	t.Run("Separated SSTable", func(t *testing.T) {
 		CreateSeparatedSSTable(data, lastKeyData, 1, 1)
-		result := SearchAll([]byte(key))
+		result := SearchAll([]byte(key), false)
 		checkNotNil(t, result, "Should find value in separated SSTable")
 		checkEqual(t, string(result), value, "Incorrect value in separated SSTable")
 	})
@@ -136,7 +136,7 @@ func TestBasicWriteAndRead(t *testing.T) {
 	// Test compact SSTable
 	t.Run("Compact SSTable", func(t *testing.T) {
 		CreateCompactSSTable(data, lastKeyData, 1, 1)
-		result := SearchAll([]byte(key))
+		result := SearchAll([]byte(key), false)
 		checkNotNil(t, result, "Should find value in compact SSTable")
 		checkEqual(t, string(result), value, "Incorrect value in compact SSTable")
 	})
@@ -150,7 +150,7 @@ func TestTombstoneHandlingSeparated(t *testing.T) {
 	lastKeyData := SerializeEntryHelper(key, "", true, true)
 
 	CreateSeparatedSSTable(data, lastKeyData, 1, 1)
-	result := SearchAll([]byte(key))
+	result := SearchAll([]byte(key), false)
 
 	// Check that the result is an empty slice instead of nil
 	if result == nil || len(result) != 0 {
@@ -166,7 +166,7 @@ func TestTombstoneHandlingCompact(t *testing.T) {
 	lastKeyData := SerializeEntryHelper(key, "", true, true)
 
 	CreateCompactSSTable(data, lastKeyData, 1, 1)
-	result := SearchAll([]byte(key))
+	result := SearchAll([]byte(key), false)
 
 	// Check that the result is an empty slice instead of nil
 	if result == nil || len(result) != 0 {
@@ -191,7 +191,7 @@ func TestFindMultiBlockEntriesCompact(t *testing.T) {
 	t.Run("RandomAccess", func(t *testing.T) {
 		for i := 0; i < 10; i++ {
 			testKey := fmt.Sprintf("key%04d", i)
-			result := SearchAll([]byte(testKey))
+			result := SearchAll([]byte(testKey), false)
 			checkNotNil(t, result, "Missing value for "+testKey)
 			checkEqual(t, len(result), int(blockSize)*2, "Incorrect value length")
 		}
@@ -214,7 +214,7 @@ func TestFindMultiBlockEntriesSeparated(t *testing.T) {
 	t.Run("RandomAccess", func(t *testing.T) {
 		for i := 0; i < 10; i++ {
 			testKey := fmt.Sprintf("key%04d", i)
-			result := SearchAll([]byte(testKey))
+			result := SearchAll([]byte(testKey), false)
 			checkNotNil(t, result, "Missing value for "+testKey)
 			checkEqual(t, len(result), int(blockSize)*2, "Incorrect value length")
 		}
@@ -247,7 +247,7 @@ func TestFindNonExistentKeys(t *testing.T) {
 
 	t.Run("Compact SSTable", func(t *testing.T) {
 		for _, tc := range testCases {
-			result := SearchAll([]byte(tc.key))
+			result := SearchAll([]byte(tc.key), false)
 			if result != nil && len(result) != 0 {
 				t.Errorf("Compact - %s: expected nil or empty, got: %v", tc.name, result)
 			}
@@ -256,7 +256,7 @@ func TestFindNonExistentKeys(t *testing.T) {
 
 	t.Run("Separated SSTable", func(t *testing.T) {
 		for _, tc := range testCases {
-			result := SearchAll([]byte(tc.key))
+			result := SearchAll([]byte(tc.key), false)
 			if result != nil && len(result) != 0 {
 				t.Errorf("Separated - %s: expected nil or empty, got: %v", tc.name, result)
 			}
@@ -283,7 +283,7 @@ func TestMultipleKeysInBlock0(t *testing.T) {
 
 	t.Run("Compact SSTable", func(t *testing.T) {
 		for i, key := range keys {
-			result := SearchAll([]byte(key))
+			result := SearchAll([]byte(key), false)
 			checkNotNil(t, result, "Compact: missing result for "+key)
 			checkEqual(t, string(result), values[i], "Compact: wrong value for "+key)
 		}
@@ -291,7 +291,7 @@ func TestMultipleKeysInBlock0(t *testing.T) {
 
 	t.Run("Separated SSTable", func(t *testing.T) {
 		for i, key := range keys {
-			result := SearchAll([]byte(key))
+			result := SearchAll([]byte(key), false)
 			checkNotNil(t, result, "Separated: missing result for "+key)
 			checkEqual(t, string(result), values[i], "Separated: wrong value for "+key)
 		}
@@ -314,7 +314,7 @@ func TestFindFullBlockEntriesCompact(t *testing.T) {
 	t.Run("RandomAccess", func(t *testing.T) {
 		for i := 0; i < 10; i++ {
 			testKey := fmt.Sprintf("key%04d", i)
-			result := SearchAll([]byte(testKey))
+			result := SearchAll([]byte(testKey), false)
 			checkNotNil(t, result, "Missing value for "+testKey)
 			checkEqual(t, len(result), 1, "Incorrect value length")
 		}
@@ -348,13 +348,13 @@ func TestSearchThroughManyTables(t *testing.T) {
 
 	t.Run("Many SSTables", func(t *testing.T) {
 		for i, key := range keys1 {
-			result := SearchAll([]byte(key))
+			result := SearchAll([]byte(key), false)
 			checkNotNil(t, result, "Compact: missing result for "+key)
 			checkEqual(t, string(result), values1[i], "Compact: wrong value for "+key)
 		}
 
 		for i, key := range keys2 {
-			result := SearchAll([]byte(key))
+			result := SearchAll([]byte(key), false)
 			checkNotNil(t, result, "Compact: missing result for "+key)
 			checkEqual(t, string(result), values2[i], "Compact: wrong value for "+key)
 		}
@@ -373,7 +373,7 @@ func TestLargeKeyTombstoneCompact(t *testing.T) {
 	CreateCompactSSTable(data, lastKeyData, 1, 1)
 
 	t.Run("DeletedLargeKey", func(t *testing.T) {
-		result := SearchAll([]byte(largeKey))
+		result := SearchAll([]byte(largeKey), false)
 		if result == nil || len(result) != 0 {
 			t.Errorf("Expected an empty slice for large tombstoned key, got: %v", result)
 		}
@@ -392,7 +392,7 @@ func TestLargeKeyTombstoneSeparate(t *testing.T) {
 	CreateSeparatedSSTable(data, lastKeyData, 1, 1)
 
 	t.Run("DeletedLargeKey", func(t *testing.T) {
-		result := SearchAll([]byte(largeKey))
+		result := SearchAll([]byte(largeKey), false)
 		if result == nil || len(result) != 0 {
 			t.Errorf("Expected an empty slice for large tombstoned key, got: %v", result)
 		}
@@ -421,11 +421,115 @@ func TestTombstoneOverridesEarlierValues(t *testing.T) {
 
 	// Check that the key is now treated as deleted
 	t.Run("TombstoneTakesPrecedence", func(t *testing.T) {
-		result := SearchAll([]byte(key))
+		result := SearchAll([]byte(key), false)
 		if result == nil || len(result) != 0 {
 			t.Errorf("Expected empty slice (deleted key), got: %v", result)
 		}
 	})
+}
+func TestFindLastSmallerKey_NoPrefix(t *testing.T) {
+	keys := [][]byte{
+		[]byte("apple"),
+		[]byte("banana"),
+		[]byte("carrot"),
+		[]byte("date"),
+		[]byte("fig"),
+	}
+
+	tests := []struct {
+		name      string
+		key       []byte
+		dataBlock bool
+		want      int64
+	}{
+		// Exact matches
+		{"ExactMatchFirst", []byte("apple"), false, 0},
+		{"ExactMatchMiddle", []byte("carrot"), false, 2},
+		{"ExactMatchLast", []byte("fig"), false, 4},
+
+		// Key smaller than first
+		{"SmallerThanFirst_DataBlockFalse", []byte("bardvark"), false, 1},
+		{"SmallerThanFirst_DataBlockTrue", []byte("bardvark"), true, -2},
+
+		// Key greater than all
+		{"GreaterThanLast", []byte("grape"), false, -1},
+
+		// Key between elements
+		{"BetweenBananaAndCarrot_DataBlockFalse", []byte("blueberry"), false, 1},
+		{"BetweenBananaAndCarrot_DataBlockTrue", []byte("blueberry"), true, -2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := FindLastSmallerKey(tt.key, keys, tt.dataBlock, false) // prefix = false always
+			if got != tt.want {
+				t.Errorf("FindLastSmallerKey(%q, dataBlock=%v) = %d; want %d", tt.key, tt.dataBlock, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSearchAllPrefix(t *testing.T) {
+	os.RemoveAll("data")
+
+	// Test podaci
+	keys := []string{
+		"apple",
+		"banana",
+		"bananaPie",
+		"carrot",
+		"carrotCake",
+		"date",
+		"fig",
+	}
+	values := []string{
+		"val_apple",
+		"val_banana",
+		"val_bananaPie",
+		"val_carrot",
+		"val_carrotCake",
+		"val_date",
+		"val_fig",
+	}
+
+	// Kreiranje SSTabele
+	var data []byte
+	for i := range keys {
+		data = append(data, SerializeEntryHelper(keys[i], values[i], false, false)...)
+	}
+	lastKey := SerializeEntryHelper(keys[len(keys)-1], "", false, true)
+	CreateCompactSSTable(data, lastKey, len(keys), len(keys))
+
+	// Test slučajevi
+	tests := []struct {
+		name     string
+		prefix   []byte
+		expected string
+		found    bool
+	}{
+		{"Prefix 'ban'", []byte("ban"), "val_banana", true},
+		{"Prefix 'bananaP'", []byte("bananaP"), "val_bananaPie", true},
+		{"Prefix 'carrotC'", []byte("carrotC"), "val_carrotCake", true},
+		{"Prefix 'f'", []byte("f"), "val_fig", true},
+		{"Prefix 'x'", []byte("x"), "", false},
+		{"Prefix 'ap'", []byte("ap"), "val_apple", true},
+		{"Prefix '' (empty)", []byte(""), "val_apple", true},
+	}
+
+	// Izvršavanje testova
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			value := SearchAll(tc.prefix, true)
+			if tc.found {
+				checkNotNil(t, value, "Expected match for prefix "+string(tc.prefix))
+				checkEqual(t, string(value), tc.expected, "Incorrect value for prefix "+string(tc.prefix))
+			} else {
+				if value != nil {
+					t.Errorf("Expected nil for prefix %q, got: %v", tc.prefix, value)
+				}
+			}
+		})
+	}
 }
 
 // | CRC 4B | TimeStamp 8B | Tombstone 1B | Keysize 8B | Valuesize 8B | Key... | Value... |
