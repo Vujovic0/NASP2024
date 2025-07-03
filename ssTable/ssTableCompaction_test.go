@@ -29,13 +29,13 @@ func TestCompactionBasicMerge(t *testing.T) {
 	MergeTables(files, newFilePath)
 	cleanUpOldFiles(t, files)
 
-	result := SearchAll([]byte("a"))
+	result := SearchAll([]byte("a"), false)
 	checkEqual(t, string(result), "1", "Incorrect value after compaction")
 
-	result = SearchAll([]byte("b"))
+	result = SearchAll([]byte("b"), false)
 	checkEqual(t, string(result), "2", "Incorrect value after compaction")
 
-	result = SearchAll([]byte("c"))
+	result = SearchAll([]byte("c"), false)
 	checkEqual(t, string(result), "3", "Incorrect value after compaction")
 }
 
@@ -61,9 +61,9 @@ func TestCompactionWithOverlappingKeys(t *testing.T) {
 	MergeTables(files, newFilePath)
 	cleanUpOldFiles(t, files)
 
-	checkEqual(t, string(SearchAll([]byte("a"))), "1", "Expected a=1")
-	checkEqual(t, string(SearchAll([]byte("b"))), "9", "Expected b=9 from newer table")
-	checkEqual(t, string(SearchAll([]byte("c"))), "3", "Expected c=3")
+	checkEqual(t, string(SearchAll([]byte("a"), false)), "1", "Expected a=1")
+	checkEqual(t, string(SearchAll([]byte("b"), false)), "9", "Expected b=9 from newer table")
+	checkEqual(t, string(SearchAll([]byte("c"), false)), "3", "Expected c=3")
 }
 
 func TestCompactionWithEmptyTable(t *testing.T) {
@@ -127,11 +127,11 @@ func TestCompactionMultiBlockEntries(t *testing.T) {
 	MergeTables(files, newFilePath)
 	cleanUpOldFiles(t, files)
 
-	resultA := SearchAll([]byte("a"))
+	resultA := SearchAll([]byte("a"), false)
 	checkEqual(t, len(resultA), len(largeValue), "Length mismatch for key a")
 	checkEqual(t, string(resultA), largeValue, "Incorrect value for key a")
 
-	resultB := SearchAll([]byte("b"))
+	resultB := SearchAll([]byte("b"), false)
 	checkEqual(t, len(resultB), len(largeValue), "Length mismatch for key b")
 	checkEqual(t, string(resultB), largeValue, "Incorrect value for key b")
 }
@@ -165,10 +165,10 @@ func TestCompactionMultiBlockKeysCompact(t *testing.T) {
 	cleanUpOldFiles(t, files)
 
 	// Verify correct retrieval of both large keys
-	result1 := SearchAll([]byte(largeKey))
+	result1 := SearchAll([]byte(largeKey), false)
 	checkEqual(t, string(result1), value, "Incorrect value for large key 1")
 
-	result2 := SearchAll([]byte(largeKey2))
+	result2 := SearchAll([]byte(largeKey2), false)
 	checkEqual(t, string(result2), value, "Incorrect value for large key 2")
 }
 
@@ -201,10 +201,10 @@ func TestCompactionMultiBlockKeysSeparate(t *testing.T) {
 	cleanUpOldFiles(t, files)
 
 	// Verify correct retrieval of both large keys
-	result1 := SearchAll([]byte(largeKey))
+	result1 := SearchAll([]byte(largeKey), false)
 	checkEqual(t, string(result1), value, "Incorrect value for large key 1")
 
-	result2 := SearchAll([]byte(largeKey2))
+	result2 := SearchAll([]byte(largeKey2), false)
 	checkEqual(t, string(result2), value, "Incorrect value for large key 2")
 }
 
@@ -237,10 +237,10 @@ func TestCompactionLargeKeyLargeValueSeparate(t *testing.T) {
 	cleanUpOldFiles(t, files)
 
 	// Verify correct retrieval of both large keys
-	result1 := SearchAll([]byte(largeKey))
+	result1 := SearchAll([]byte(largeKey), false)
 	checkEqual(t, string(result1), value, "Incorrect value for large key 1")
 
-	result2 := SearchAll([]byte(largeKey2))
+	result2 := SearchAll([]byte(largeKey2), false)
 	checkEqual(t, string(result2), value, "Incorrect value for large key 2")
 }
 
@@ -273,10 +273,10 @@ func TestCompactionLargeKeyLargeValueCompact(t *testing.T) {
 	cleanUpOldFiles(t, files)
 
 	// Verify correct retrieval of both large keys
-	result1 := SearchAll([]byte(largeKey))
+	result1 := SearchAll([]byte(largeKey), false)
 	checkEqual(t, string(result1), value, "Incorrect value for large key 1")
 
-	result2 := SearchAll([]byte(largeKey2))
+	result2 := SearchAll([]byte(largeKey2), false)
 	checkEqual(t, string(result2), value, "Incorrect value for large key 2")
 }
 
@@ -316,16 +316,16 @@ func TestCompactionMixedSizesCompact(t *testing.T) {
 	cleanUpOldFiles(t, files)
 
 	// --- Validate all entries after compaction ---
-	result1 := SearchAll([]byte(largeKey1))
+	result1 := SearchAll([]byte(largeKey1), false)
 	checkEqual(t, string(result1), largeValue, "Incorrect value for large key 1")
 
-	result2 := SearchAll([]byte(largeKey2))
+	result2 := SearchAll([]byte(largeKey2), false)
 	checkEqual(t, string(result2), largeValue, "Incorrect value for large key 2")
 
-	result3 := SearchAll([]byte(smallKey1))
+	result3 := SearchAll([]byte(smallKey1), false)
 	checkEqual(t, string(result3), smallValue, "Incorrect value for small key 1")
 
-	result4 := SearchAll([]byte(smallKey2))
+	result4 := SearchAll([]byte(smallKey2), false)
 	checkEqual(t, string(result4), smallValue, "Incorrect value for small key 2")
 }
 
@@ -365,16 +365,16 @@ func TestCompactionMixedSizesSeparate(t *testing.T) {
 	cleanUpOldFiles(t, files)
 
 	// --- Validate all entries after compaction ---
-	result1 := SearchAll([]byte(largeKey1))
+	result1 := SearchAll([]byte(largeKey1), false)
 	checkEqual(t, string(result1), largeValue, "Incorrect value for large key 1")
 
-	result2 := SearchAll([]byte(largeKey2))
+	result2 := SearchAll([]byte(largeKey2), false)
 	checkEqual(t, string(result2), largeValue, "Incorrect value for large key 2")
 
-	result3 := SearchAll([]byte(smallKey1))
+	result3 := SearchAll([]byte(smallKey1), false)
 	checkEqual(t, string(result3), smallValue, "Incorrect value for small key 1")
 
-	result4 := SearchAll([]byte(smallKey2))
+	result4 := SearchAll([]byte(smallKey2), false)
 	checkEqual(t, string(result4), smallValue, "Incorrect value for small key 2")
 }
 
@@ -419,18 +419,18 @@ func TestCompactionWithManyOverlappingKeys(t *testing.T) {
 	cleanUpOldFiles(t, files)
 
 	// Check expected values after compaction (newest timestamp wins)
-	checkEqual(t, string(SearchAll([]byte("a"))), "100", "Expected a=100 (from table 3)")
-	checkEqual(t, string(SearchAll([]byte("b"))), "20", "Expected b=20 (from table 2)")
-	checkEqual(t, string(SearchAll([]byte("c"))), "30", "Expected c=30 (from table 2)")
-	checkEqual(t, string(SearchAll([]byte("d"))), "400", "Expected d=400 (from table 3)")
-	checkEqual(t, string(SearchAll([]byte("e"))), "5", "Expected e=5 (from table 1)")
-	checkEqual(t, string(SearchAll([]byte("f"))), "6", "Expected f=6 (from table 2)")
-	checkEqual(t, string(SearchAll([]byte("g"))), "7", "Expected g=7 (from table 2)")
-	checkEqual(t, string(SearchAll([]byte("h"))), "8", "Expected h=8 (from table 3)")
-	checkEqual(t, string(SearchAll([]byte("z"))), "", "Expected z to not be found (non-existent key)")
-	checkEqual(t, string(SearchAll([]byte("3"))), "", "Expected 3 to not be found (non-existent key)")
-	checkEqual(t, string(SearchAll([]byte("c1"))), "", "Expected c1 to not be found (non-existent key)")
-	checkEqual(t, string(SearchAll([]byte("abcde"))), "", "Expected abcde to not be found (non-existent key)")
+	checkEqual(t, string(SearchAll([]byte("a"), false)), "100", "Expected a=100 (from table 3)")
+	checkEqual(t, string(SearchAll([]byte("b"), false)), "20", "Expected b=20 (from table 2)")
+	checkEqual(t, string(SearchAll([]byte("c"), false)), "30", "Expected c=30 (from table 2)")
+	checkEqual(t, string(SearchAll([]byte("d"), false)), "400", "Expected d=400 (from table 3)")
+	checkEqual(t, string(SearchAll([]byte("e"), false)), "5", "Expected e=5 (from table 1)")
+	checkEqual(t, string(SearchAll([]byte("f"), false)), "6", "Expected f=6 (from table 2)")
+	checkEqual(t, string(SearchAll([]byte("g"), false)), "7", "Expected g=7 (from table 2)")
+	checkEqual(t, string(SearchAll([]byte("h"), false)), "8", "Expected h=8 (from table 3)")
+	checkEqual(t, string(SearchAll([]byte("z"), false)), "", "Expected z to not be found (non-existent key)")
+	checkEqual(t, string(SearchAll([]byte("3"), false)), "", "Expected 3 to not be found (non-existent key)")
+	checkEqual(t, string(SearchAll([]byte("c1"), false)), "", "Expected c1 to not be found (non-existent key)")
+	checkEqual(t, string(SearchAll([]byte("abcde"), false)), "", "Expected abcde to not be found (non-existent key)")
 }
 
 func TestCompactionNewerKeysOverrideOlder(t *testing.T) {
@@ -463,9 +463,9 @@ func TestCompactionNewerKeysOverrideOlder(t *testing.T) {
 	CreateSeparatedSSTable(data1, last1, 2, 2)
 
 	// Verify that after compaction, Find returns newest values
-	checkEqual(t, string(SearchAll([]byte("key1"))), "old_value1", "Expected key1 to have older value")
-	checkEqual(t, string(SearchAll([]byte("key2"))), "old_value2", "Expected key2 to keep old value (no overwrite)")
-	checkEqual(t, string(SearchAll([]byte("key3"))), "new_value3", "Expected key3 to have new value")
+	checkEqual(t, string(SearchAll([]byte("key1"), false)), "old_value1", "Expected key1 to have older value")
+	checkEqual(t, string(SearchAll([]byte("key2"), false)), "old_value2", "Expected key2 to keep old value (no overwrite)")
+	checkEqual(t, string(SearchAll([]byte("key3"), false)), "new_value3", "Expected key3 to have new value")
 	cleanUpOldFiles(t, files)
 }
 
