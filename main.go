@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"NASP2024/console"
+	"github.com/Vujovic0/NASP2024/console"
 )
 
 func main() {

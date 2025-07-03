@@ -1,8 +1,6 @@
 package ssTable
 
 import (
-	"NASP2024/blockManager"
-	"NASP2024/config"
 	"bytes"
 	"container/heap"
 	"encoding/binary"
@@ -10,6 +8,10 @@ import (
 	"hash/crc32"
 	"os"
 	"strings"
+
+	"github.com/Vujovic0/NASP2024/config"
+
+	"github.com/Vujovic0/NASP2024/blockManager"
 )
 
 // Used in making index and summary segments
@@ -282,7 +284,7 @@ func getLimits(files []*os.File) []uint64 {
 		if strings.HasSuffix(fileName, "compact.bin") {
 
 			lastBlock := blockManager.ReadBlock(file, lastBlockOffset)
-			fileLimitBytes := lastBlock.GetData()[9 : 9+8]
+			fileLimitBytes := lastBlock.GetData()[9+8 : 9+8*2]
 			fileLimit := binary.LittleEndian.Uint64(fileLimitBytes)
 			tableLimits[index] = fileLimit
 		} else if strings.HasSuffix(fileName, "summary.bin") {
@@ -296,6 +298,7 @@ func getLimits(files []*os.File) []uint64 {
 
 // takes file pointers of tables that are compacting and the name of the new file for data
 // newFilePath should have suffix "compact.bin" or "data.bin"
+// !!! THE POINTERS MUST BE SORTED FROM OLDEST TO NEWEST !!!
 // doesn't close the files when they reach the end
 // doesn't delete the old tables
 // if the compaction makes an empty table, delete the opened file (this is checked using lastElement)

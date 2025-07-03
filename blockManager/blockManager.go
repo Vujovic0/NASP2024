@@ -1,7 +1,7 @@
 package blockManager
 
 import (
-	"NASP2024/config"
+	"github.com/Vujovic0/NASP2024/config"
 	"io"
 	"os"
 )

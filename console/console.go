@@ -1,9 +1,10 @@
 package console
 
 import (
-	"NASP2024/wal"
 	"fmt"
-	"NASP2024/memtableStructures"
+
+	"github.com/Vujovic0/NASP2024/memtableStructures"
+	"github.com/Vujovic0/NASP2024/wal"
 )
 
 func Start() {
@@ -13,7 +14,7 @@ func Start() {
 	memtable := memtableStructures.InitializeMemoryTable()
 	fmt.Println(memtable.CurrentSize)
 	if walFactory == nil {
-	fmt.Println("WAL was not initialized successfully")
+		fmt.Println("WAL was not initialized successfully")
 	} else {
 		fmt.Println("WAL was inizialized successfully")
 	}
