@@ -16,7 +16,7 @@ import (
 // In another case it is an offset where the max element of the summary starts
 //
 // If value of an entry is an empty slice, it means that the tombstone is set to 1
-func getKeysType0(block *blockManager.Block, dataBlockCheck bool, summaryBound uint64) ([][]byte, [][]byte, error) {
+func GetKeysType0(block *blockManager.Block, dataBlockCheck bool, summaryBound uint64) ([][]byte, [][]byte, error) {
 	firstSummaryBlock := false
 	if summaryBound != 0 {
 		if block.GetOffset() == summaryBound {
@@ -76,7 +76,7 @@ func getKeysType0(block *blockManager.Block, dataBlockCheck bool, summaryBound u
 }
 
 // Returns key bytes, value bytes, key size left, value size left
-func getKeysType1(block *blockManager.Block, dataBlockCheck bool, summaryBound uint64) ([]byte, []byte, uint64, uint64, error) {
+func GetKeysType1(block *blockManager.Block, dataBlockCheck bool, summaryBound uint64) ([]byte, []byte, uint64, uint64, error) {
 	firstSummaryBlock := false
 	if summaryBound != 0 {
 		if block.GetOffset() == summaryBound {
@@ -134,7 +134,7 @@ func getKeysType1(block *blockManager.Block, dataBlockCheck bool, summaryBound u
 }
 
 // Returns key bytes, value bytes, key size left, value size left
-func getKeysType2(block *blockManager.Block, keySize uint64, valueSize uint64, tombstone bool, dataBlock bool) ([]byte, []byte, uint64, uint64, error) {
+func GetKeysType2(block *blockManager.Block, keySize uint64, valueSize uint64, tombstone bool, dataBlock bool) ([]byte, []byte, uint64, uint64, error) {
 	blockData := block.GetData()
 	blockPointer := uint64(9)
 	var keyBytes []byte = make([]byte, 0)
@@ -167,7 +167,7 @@ func getKeysType2(block *blockManager.Block, keySize uint64, valueSize uint64, t
 }
 
 // Returns key bytes, value bytes
-func getKeysType3(block *blockManager.Block, keySize uint64, valueSize uint64, tombstone bool, dataBlock bool) ([]byte, []byte, error) {
+func GetKeysType3(block *blockManager.Block, keySize uint64, valueSize uint64, tombstone bool, dataBlock bool) ([]byte, []byte, error) {
 	blockData := block.GetData()
 	dataSize := uint64(block.GetSize())
 	dataSize += 9
