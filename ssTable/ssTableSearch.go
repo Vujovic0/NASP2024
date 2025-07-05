@@ -91,7 +91,7 @@ func searchCompact(filePath string, key []byte, prefix bool) ([]byte, uint64, er
 
 		switch block.GetType() {
 		case 0:
-			keys, values, err = getKeysType0(block, dataBlockCheck, boundIndex)
+			keys, values, err = GetKeysType0(block, dataBlockCheck, boundIndex)
 			if err != nil {
 				panic("Error reading block")
 			}
@@ -131,7 +131,7 @@ func searchCompact(filePath string, key []byte, prefix bool) ([]byte, uint64, er
 			continue
 
 		case 1:
-			keyBytes, valueBytes, keySizeLeft, valueSizeLeft, err = getKeysType1(block, dataBlockCheck, boundIndex)
+			keyBytes, valueBytes, keySizeLeft, valueSizeLeft, err = GetKeysType1(block, dataBlockCheck, boundIndex)
 			if err != nil {
 				panic(err)
 			}
@@ -142,7 +142,7 @@ func searchCompact(filePath string, key []byte, prefix bool) ([]byte, uint64, er
 			blockOffset++
 
 		case 2:
-			keyBytesToAppend, valueBytesToAppend, keySizeLeftNew, valueSizeLeftNew, err := getKeysType2(block, keySizeLeft, valueSizeLeft, tombstone, dataBlockCheck)
+			keyBytesToAppend, valueBytesToAppend, keySizeLeftNew, valueSizeLeftNew, err := GetKeysType2(block, keySizeLeft, valueSizeLeft, tombstone, dataBlockCheck)
 			if err != nil {
 				panic(err)
 			}
@@ -153,7 +153,7 @@ func searchCompact(filePath string, key []byte, prefix bool) ([]byte, uint64, er
 			blockOffset++
 
 		case 3:
-			keyBytesToAppend, valueBytesToAppend, err := getKeysType3(block, keySizeLeft, valueSizeLeft, tombstone, dataBlockCheck)
+			keyBytesToAppend, valueBytesToAppend, err := GetKeysType3(block, keySizeLeft, valueSizeLeft, tombstone, dataBlockCheck)
 			if err != nil {
 				panic(err)
 			}
@@ -289,7 +289,7 @@ func searchSeparated(filePath string, key []byte, offset uint64, prefix bool) ([
 
 		switch block.GetType() {
 		case 0:
-			keys, values, err = getKeysType0(block, dataBlockCheck, boundIndex)
+			keys, values, err = GetKeysType0(block, dataBlockCheck, boundIndex)
 			if err != nil {
 				panic(err)
 			}
@@ -310,7 +310,7 @@ func searchSeparated(filePath string, key []byte, offset uint64, prefix bool) ([
 				return values[index], entryBlockOffset, nil // return current offset on match
 			}
 		case 1:
-			keyBytes, valueBytes, keySizeLeft, valueSizeLeft, err = getKeysType1(block, dataBlockCheck, boundIndex)
+			keyBytes, valueBytes, keySizeLeft, valueSizeLeft, err = GetKeysType1(block, dataBlockCheck, boundIndex)
 			if err != nil {
 				panic(err)
 			}
@@ -319,7 +319,7 @@ func searchSeparated(filePath string, key []byte, offset uint64, prefix bool) ([
 			}
 
 		case 2:
-			keyBytesToAppend, valueBytesToAppend, keySizeLeftNew, valueSizeLeftNew, err := getKeysType2(block, keySizeLeft, valueSizeLeft, tombstone, dataBlockCheck)
+			keyBytesToAppend, valueBytesToAppend, keySizeLeftNew, valueSizeLeftNew, err := GetKeysType2(block, keySizeLeft, valueSizeLeft, tombstone, dataBlockCheck)
 			if err != nil {
 				panic(err)
 			}
@@ -329,7 +329,7 @@ func searchSeparated(filePath string, key []byte, offset uint64, prefix bool) ([
 			valueSizeLeft = valueSizeLeftNew
 
 		case 3:
-			keyBytesToAppend, valueBytesToAppend, err := getKeysType3(block, keySizeLeft, valueSizeLeft, tombstone, dataBlockCheck)
+			keyBytesToAppend, valueBytesToAppend, err := GetKeysType3(block, keySizeLeft, valueSizeLeft, tombstone, dataBlockCheck)
 			if err != nil {
 				panic(err)
 			}
@@ -386,7 +386,7 @@ func SearchAll(key []byte, prefix bool) []byte {
 			return valueBytes
 		}
 	}
-	return nil
+	return []byte{}
 }
 
 // Takes filepath of an ssTable and the key it should search for
