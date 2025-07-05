@@ -1,6 +1,10 @@
 package memtableStructures
 
-import "fmt"
+import (
+	"fmt"
+	"sort"
+	"strings"
+)
 
 type HashMapNode struct {
 	Key   string
@@ -124,6 +128,50 @@ func (hm *HashMap) getAllElements() []*Element {
 
 func (hm *HashMap) LastElement() *Element {
 	return hm.lastElement
+}
+
+func (hm *HashMap) searchByPrefix(prefix string) []*Element {
+	var results []*Element
+
+	// Prolazimo kroz sve bucket-e
+	for i := 0; i < len(hm.buckets); i++ {
+		current := hm.buckets[i]
+		for current != nil {
+			if strings.HasPrefix(current.Value.Key, prefix) && !current.Value.Tombstone {
+				results = append(results, current.Value)
+			}
+			current = current.Next
+		}
+	}
+
+	// Sortiraj rezultate po kljucu
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Key < results[j].Key
+	})
+
+	return results
+}
+
+func (hm *HashMap) searchByRange(startKey, endKey string) []*Element {
+	var results []*Element
+
+	// Prolazimo kroz sve bucket-e
+	for i := 0; i < len(hm.buckets); i++ {
+		current := hm.buckets[i]
+		for current != nil {
+			if current.Value.Key >= startKey && current.Value.Key <= endKey && !current.Value.Tombstone {
+				results = append(results, current.Value)
+			}
+			current = current.Next
+		}
+	}
+
+	// Sortiramo rezultate po kljucu
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Key < results[j].Key
+	})
+
+	return results
 }
 
 // func main() {

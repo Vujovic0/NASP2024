@@ -3,6 +3,7 @@ package memtableStructures
 import (
 	"fmt"
 	"math/rand"
+	"strings"
 )
 
 type Node struct {
@@ -35,7 +36,7 @@ func newSkipList(maxHeight int) *SkipList {
 }
 
 // Funkcija za umetanje u Skip Listu
-func (s *SkipList) insert(key, value string, timestamp int64, tombstone bool) {
+func (s *SkipList) insert(key string, value []byte, timestamp int64, tombstone bool) {
 	level := s.roll()
 
 	if level > s.height {
@@ -182,4 +183,50 @@ func (sl *SkipList) update(element Element) {
 
 func (sl *SkipList) LastElement() *Element {
 	return sl.lastElement
+}
+
+func (sl *SkipList) searchByPrefix(prefix string) []*Element {
+	var results []*Element
+	current := sl.head
+
+	// Trazimo prvi cvor koji moze da sadrzi prefiks
+	for level := sl.height; level >= 0; level-- {
+		for current.next[level] != nil && current.next[level].value.Key < prefix {
+			current = current.next[level]
+		}
+	}
+	current = current.next[0]
+
+	// Prolazimo kroz sve cvorove koji pocinju sa prefixom
+	for current != nil && strings.HasPrefix(current.value.Key, prefix) {
+		if !current.value.Tombstone {
+			results = append(results, current.value)
+		}
+		current = current.next[0]
+	}
+
+	return results
+}
+
+func (sl *SkipList) searchByRange(startKey, endKey string) []*Element {
+	var results []*Element
+	current := sl.head
+
+	// Pronalazimo prvi cvor >= startKey
+	for level := sl.height; level >= 0; level-- {
+		for current.next[level] != nil && current.next[level].value.Key < startKey {
+			current = current.next[level]
+		}
+	}
+	current = current.next[0]
+
+	// Prolazimo kroz sve cvorove u range-u [startKey, endKey]
+	for current != nil && current.value.Key <= endKey {
+		if current.value.Key >= startKey && !current.value.Tombstone {
+			results = append(results, current.value)
+		}
+		current = current.next[0]
+	}
+
+	return results
 }

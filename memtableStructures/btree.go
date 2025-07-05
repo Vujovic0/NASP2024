@@ -1,6 +1,10 @@
 package memtableStructures
 
-import "fmt"
+import (
+	"fmt"
+	"sort"
+	"strings"
+)
 
 type BTreeNode struct {
 	keys     []string     // array of keys
@@ -492,6 +496,72 @@ func (treeNode *BTreeNode) collectElements(elements *[]*Element) {
 
 func (tree *BTree) LastElement() *Element {
 	return tree.lastElement
+}
+
+func (bt *BTree) searchByPrefix(prefix string) []*Element {
+	var results []*Element
+	bt.searchPrefixInNode(bt.root, prefix, &results)
+
+	// Sortiramo rezultate po kljucu
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Key < results[j].Key
+	})
+
+	return results
+}
+
+func (bt *BTree) searchPrefixInNode(node *BTreeNode, prefix string, results *[]*Element) {
+	if node == nil {
+		return
+	}
+
+	// Pretraga u trenutnom cvoru
+	for i := 0; i < node.n; i++ {
+		elem := &node.values[i]
+		if strings.HasPrefix(elem.Key, prefix) && !elem.Tombstone {
+			*results = append(*results, elem)
+		}
+	}
+
+	// Rekurzivna pretraga u deci
+	if !node.isLeaf {
+		for _, child := range node.children {
+			bt.searchPrefixInNode(child, prefix, results)
+		}
+	}
+}
+
+func (bt *BTree) searchByRange(startKey, endKey string) []*Element {
+	var results []*Element
+	bt.searchRangeInNode(bt.root, startKey, endKey, &results)
+
+	// Sortiramo rezultate po kljucu
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Key < results[j].Key
+	})
+
+	return results
+}
+
+func (bt *BTree) searchRangeInNode(node *BTreeNode, startKey, endKey string, results *[]*Element) {
+	if node == nil {
+		return
+	}
+
+	// Pretrazujemo elemente u trenutnom cvoru
+	for i := 0; i < node.n; i++ {
+		elem := &node.values[i]
+		if elem.Key >= startKey && elem.Key <= endKey && !elem.Tombstone {
+			*results = append(*results, elem)
+		}
+	}
+
+	// Rekurzivna pretraga u deci
+	if !node.isLeaf {
+		for _, child := range node.children {
+			bt.searchRangeInNode(child, startKey, endKey, results)
+		}
+	}
 }
 
 // func main() {
