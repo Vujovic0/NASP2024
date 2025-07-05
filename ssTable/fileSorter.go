@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -175,7 +174,29 @@ func getTablePaths(levelPath string, tableNames []string) []string {
 
 // returns absolute path to the /data folder regardless of where you run from
 func getDataPath() string {
-	_, currentFile, _, _ := runtime.Caller(0)
-	baseDir := filepath.Dir(currentFile) // .../ssTable
-	return filepath.Join(baseDir, "data")
+	cwd, err := os.Getwd()
+	if err != nil {
+		panic(err)
+	}
+
+	dir := cwd
+	var rootFolder string
+
+	for {
+		// Tražimo root folder NASP2024 u putanji
+		if strings.HasSuffix(dir, "NASP2024") || strings.HasSuffix(dir, "NASP2024"+string(os.PathSeparator)) {
+			rootFolder = dir
+			break
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			panic("no file root NASP2024 found")
+		}
+		dir = parent
+	}
+
+	dataPath := filepath.Join(rootFolder, "data")
+
+	return dataPath
 }

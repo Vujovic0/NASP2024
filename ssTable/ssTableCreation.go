@@ -224,11 +224,11 @@ func getGeneration(increment bool) uint64 {
 func CreateCompactSSTable(data []byte, lastElementData []byte, summary_sparsity int, index_sparsity int) {
 	dataPath := getDataPath()
 	if _, err := os.Stat(dataPath); os.IsNotExist(err) {
-		err := os.Mkdir(dataPath, 0644)
+		err := os.Mkdir(dataPath, 0755)
 		if err != nil {
 			panic(err)
 		}
-		err = os.Mkdir(dataPath+string(os.PathSeparator)+"L0", 0644)
+		err = os.Mkdir(dataPath+string(os.PathSeparator)+"L0", 0755)
 		if err != nil {
 			panic(err)
 		}
@@ -340,11 +340,11 @@ func CreateCompactSSTable(data []byte, lastElementData []byte, summary_sparsity 
 func CreateSeparatedSSTable(data []byte, lastElementData []byte, summary_sparsity int, index_sparsity int) {
 	dataPath := getDataPath()
 	if _, err := os.Stat(dataPath); os.IsNotExist(err) {
-		err := os.Mkdir(dataPath, 0644)
+		err := os.Mkdir(dataPath, 0755)
 		if err != nil {
 			panic(err)
 		}
-		err = os.Mkdir(dataPath+string(os.PathSeparator)+"L0", 0644)
+		err = os.Mkdir(dataPath+string(os.PathSeparator)+"L0", 0755)
 		if err != nil {
 			panic(err)
 		}

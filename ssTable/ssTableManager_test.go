@@ -118,7 +118,8 @@ func TestBoundaryConditions(t *testing.T) {
 
 func TestBasicWriteAndRead(t *testing.T) {
 	// Setup
-	os.RemoveAll("data")
+	dataPath := getDataPath()
+	os.RemoveAll(dataPath)
 
 	key := "testKey"
 	value := "testValue"
@@ -143,7 +144,8 @@ func TestBasicWriteAndRead(t *testing.T) {
 }
 
 func TestTombstoneHandlingSeparated(t *testing.T) {
-	os.RemoveAll("data")
+	dataPath := getDataPath()
+	os.RemoveAll(dataPath)
 
 	key := "deletedKey"
 	data := SerializeEntryHelper(key, "", true, false)
@@ -159,7 +161,8 @@ func TestTombstoneHandlingSeparated(t *testing.T) {
 }
 
 func TestTombstoneHandlingCompact(t *testing.T) {
-	os.RemoveAll("data")
+	dataPath := getDataPath()
+	os.RemoveAll(dataPath)
 
 	key := "deletedKey"
 	data := SerializeEntryHelper(key, "", true, false)
@@ -176,7 +179,8 @@ func TestTombstoneHandlingCompact(t *testing.T) {
 
 // TestMultiBlockEntries tests large values spanning multiple blocks
 func TestFindMultiBlockEntriesCompact(t *testing.T) {
-	os.RemoveAll("data")
+	dataPath := getDataPath()
+	os.RemoveAll(dataPath)
 
 	var bigData []byte
 	for i := 0; i < 10; i++ {
@@ -199,7 +203,8 @@ func TestFindMultiBlockEntriesCompact(t *testing.T) {
 }
 
 func TestFindMultiBlockEntriesSeparated(t *testing.T) {
-	os.RemoveAll("data")
+	dataPath := getDataPath()
+	os.RemoveAll(dataPath)
 
 	var bigData []byte
 	for i := 0; i < 10; i++ {
@@ -222,7 +227,8 @@ func TestFindMultiBlockEntriesSeparated(t *testing.T) {
 }
 
 func TestFindNonExistentKeys(t *testing.T) {
-	os.RemoveAll("data")
+	dataPath := getDataPath()
+	os.RemoveAll(dataPath)
 
 	var data []byte
 	keys := []string{"key0010", "key0020", "key0030"}
@@ -248,7 +254,7 @@ func TestFindNonExistentKeys(t *testing.T) {
 	t.Run("Compact SSTable", func(t *testing.T) {
 		for _, tc := range testCases {
 			result := SearchAll([]byte(tc.key), false)
-			if result != nil && len(result) != 0 {
+			if len(result) != 0 {
 				t.Errorf("Compact - %s: expected nil or empty, got: %v", tc.name, result)
 			}
 		}
@@ -257,15 +263,18 @@ func TestFindNonExistentKeys(t *testing.T) {
 	t.Run("Separated SSTable", func(t *testing.T) {
 		for _, tc := range testCases {
 			result := SearchAll([]byte(tc.key), false)
-			if result != nil && len(result) != 0 {
+			if len(result) != 0 {
 				t.Errorf("Separated - %s: expected nil or empty, got: %v", tc.name, result)
 			}
 		}
 	})
+
+	os.RemoveAll(dataPath)
 }
 
 func TestMultipleKeysInBlock0(t *testing.T) {
-	os.RemoveAll("data")
+	dataPath := getDataPath()
+	os.RemoveAll(dataPath)
 
 	// Create several small entries that will all fit inside the first block
 	var data []byte
@@ -299,7 +308,8 @@ func TestMultipleKeysInBlock0(t *testing.T) {
 }
 
 func TestFindFullBlockEntriesCompact(t *testing.T) {
-	os.RemoveAll("data")
+	dataPath := getDataPath()
+	os.RemoveAll(dataPath)
 
 	var bigData []byte
 	for i := 0; i < 10; i++ {
@@ -322,7 +332,8 @@ func TestFindFullBlockEntriesCompact(t *testing.T) {
 }
 
 func TestSearchThroughManyTables(t *testing.T) {
-	os.RemoveAll("data")
+	dataPath := getDataPath()
+	os.RemoveAll(dataPath)
 
 	// Create several small entries that will all fit inside the first block
 	var data1 []byte
@@ -362,7 +373,8 @@ func TestSearchThroughManyTables(t *testing.T) {
 }
 
 func TestLargeKeyTombstoneCompact(t *testing.T) {
-	os.RemoveAll("data")
+	dataPath := getDataPath()
+	os.RemoveAll(dataPath)
 
 	// Create a large key that spans multiple blocks
 	largeKey := strings.Repeat("K", config.GlobalBlockSize*2)
@@ -381,7 +393,8 @@ func TestLargeKeyTombstoneCompact(t *testing.T) {
 }
 
 func TestLargeKeyTombstoneSeparate(t *testing.T) {
-	os.RemoveAll("data")
+	dataPath := getDataPath()
+	os.RemoveAll(dataPath)
 
 	// Create a large key that spans multiple blocks
 	largeKey := strings.Repeat("K", config.GlobalBlockSize*2)
@@ -400,7 +413,8 @@ func TestLargeKeyTombstoneSeparate(t *testing.T) {
 }
 
 func TestTombstoneOverridesEarlierValues(t *testing.T) {
-	os.RemoveAll("data")
+	dataPath := getDataPath()
+	os.RemoveAll(dataPath)
 
 	key := "conflictKey"
 
@@ -470,7 +484,8 @@ func TestFindLastSmallerKey_NoPrefix(t *testing.T) {
 }
 
 func TestSearchAllPrefix(t *testing.T) {
-	os.RemoveAll("data")
+	dataPath := getDataPath()
+	os.RemoveAll(dataPath)
 
 	// Test podaci
 	keys := []string{
