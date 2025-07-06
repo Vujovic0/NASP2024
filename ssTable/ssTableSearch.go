@@ -255,7 +255,7 @@ func searchSeparated(filePath string, key []byte, offset uint64, prefix bool) ([
 
 	var boundIndex uint64 = 0
 	var entryBlockOffset uint64 = 0
-	var lastEntryOffset uint64 = 0 // <== NEW: track actual match block offset
+	var lastEntryOffset uint64 = 0
 
 	fileType := filePath[len(filePath)-11:]
 	if fileType == "summary.bin" {
@@ -305,9 +305,9 @@ func searchSeparated(filePath string, key []byte, offset uint64, prefix bool) ([
 				return lastValue, lastEntryOffset, nil
 			case -1:
 				lastValue = values[len(values)-1]
-				lastEntryOffset = entryBlockOffset // track last value's offset
+				lastEntryOffset = entryBlockOffset
 			default:
-				return values[index], entryBlockOffset, nil // return current offset on match
+				return values[index], entryBlockOffset, nil
 			}
 		case 1:
 			keyBytes, valueBytes, keySizeLeft, valueSizeLeft, err = GetKeysType1(block, dataBlockCheck, boundIndex)

@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"hash/crc32"
+	"math"
 	"os"
 	"strings"
 
@@ -174,7 +175,7 @@ func getBlockEntriesTypeSplit(block *blockManager.Block, file *os.File, offset u
 	header := InitHeader(blockData, true)
 
 	var dataBlock bool
-	if strings.HasSuffix(block.GetFilePath(), "data.bin") {
+	if strings.HasSuffix(block.GetFilePath(), "data.bin") || strings.HasSuffix(block.GetFilePath(), "compact.bin") {
 		dataBlock = true
 	} else {
 		dataBlock = false
@@ -280,7 +281,8 @@ func getLimits(files []*os.File) []uint64 {
 	for index, file := range files {
 		fileName := file.Name()
 		fileInfo, _ := file.Stat()
-		lastBlockOffset := uint64(fileInfo.Size())/uint64(config.GlobalBlockSize) - 1
+		fileSize := fileInfo.Size()
+		lastBlockOffset := uint64(math.Ceil(float64(fileSize)/float64(config.GlobalBlockSize)) - 1)
 		if strings.HasSuffix(fileName, "compact.bin") {
 
 			lastBlock := blockManager.ReadBlock(file, lastBlockOffset)

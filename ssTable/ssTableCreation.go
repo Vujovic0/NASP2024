@@ -33,7 +33,7 @@ type channelResult struct {
 // | CRC 4B | TimeStamp 8B | Tombstone 1B | Keysize 8B | Valuesize 8B | Key... | Value... |
 // If entry has tombstone 1, the entry MUST NOT have valueSize and value
 // Returns block per block as well as the first key in the block in bytes
-
+//
 // boze me sacuvaj, prljavog li koda
 func PrepareSSTableBlocks(filePath string, data []byte, dataBlocksCheck bool, blockOffset uint64, firstSummaryBlock bool) <-chan *channelResult {
 	ch := make(chan *channelResult)

@@ -183,7 +183,7 @@ func getDataPath() string {
 	var rootFolder string
 
 	for {
-		// Tražimo root folder NASP2024 u putanji
+
 		if strings.HasSuffix(dir, "NASP2024") || strings.HasSuffix(dir, "NASP2024"+string(os.PathSeparator)) {
 			rootFolder = dir
 			break
