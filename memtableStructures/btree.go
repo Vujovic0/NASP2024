@@ -1,4 +1,4 @@
-package memtableStructures
+package main
 
 import (
 	"fmt"
