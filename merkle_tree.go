@@ -17,8 +17,8 @@ type Element struct {
 }
 
 type MerkleTree struct {
-	Leaves     []string   // Hash-ovi listova (Element objekata)
-	TreeLevels [][]string // Nivoi stabla (hijerarhija hash-ova)
+	Leaves     []uint32   // Hash-ovi listova (Element objekata)
+	TreeLevels [][]uint32 // Nivoi stabla (hijerarhija hash-ova)
 }
 
 // Funkcija za serijalizaciju Element objekta u byte array
@@ -26,28 +26,49 @@ func elementToBytes(element *Element) []byte {
 	var buffer bytes.Buffer
 	tmp := make([]byte, binary.MaxVarintLen64)
 
-	// 1. Duzina kljuca
-	n := binary.PutUvarint(tmp, uint64(len(element.Key)))
-	buffer.Write(tmp[:n])
+	// 1. Timestamp
+	if config.VariableEncoding {
+		n := binary.PutVarint(tmp, element.Timestamp)
+		buffer.Write(tmp[:n])
+	} else {
+		binary.Write(&buffer, binary.LittleEndian, element.Timestamp)
+	}
 
-	// 2. Kljuc
-	buffer.WriteString(element.Key)
-
-	// 3. Timestamp
-	n = binary.PutVarint(tmp, element.Timestamp)
-	buffer.Write(tmp[:n])
-
-	// 4. Tombstone
+	// 2. Tombstone
 	if element.Tombstone {
 		buffer.WriteByte(1)
 	} else {
 		buffer.WriteByte(0)
 	}
 
-	// 5. Ako element nije obrisan, upisujemo duzinu vrednosti i vrednost
-	if !element.Tombstone {
-		n = binary.PutUvarint(tmp, uint64(len(element.Value)))
+	if config.VariableEncoding {
+		// 3. Duzina kljuca
+		tmp := make([]byte, binary.MaxVarintLen64)
+		n := binary.PutUvarint(tmp, uint64(len(element.Key)))
 		buffer.Write(tmp[:n])
+
+		// 4. Duzina vrednosti - samo ako nije tombstone
+		if !element.Tombstone {
+			n = binary.PutUvarint(tmp, uint64(len(element.Value)))
+			buffer.Write(tmp[:n])
+		}
+	} else {
+		// 3. Duzina kljuca (uint64)
+		keySize := uint64(len(element.Key))
+		binary.Write(&buffer, binary.LittleEndian, keySize)
+
+		// 4. Duzina vrednosti (uint64) - samo ako nije tombstone
+		if !element.Tombstone {
+			valueSize := uint64(len(element.Value))
+			binary.Write(&buffer, binary.LittleEndian, valueSize)
+		}
+	}
+
+	// 5. Kljuc
+	buffer.WriteString(element.Key)
+
+	// 6. Ako element nije obrisan, upisujemo vrednost
+	if !element.Tombstone {
 		buffer.Write(element.Value)
 	}
 
@@ -55,21 +76,20 @@ func elementToBytes(element *Element) []byte {
 }
 
 // Funkcija za heshiranje Element objekta
-func hashElement(element *Element) string {
+func hashElement(element *Element) uint32 {
 	data := elementToBytes(element)
 	h := crc32.ChecksumIEEE(data)
-	return fmt.Sprintf("%08x", h)
+	return h
 }
 
 // Funkcija za heshiranje ulaznog stringa
-func hashData(data string) string {
-	h := crc32.ChecksumIEEE([]byte(data))
-	return fmt.Sprintf("%08x", h)
+func hashData(data []byte) uint32 {
+	return crc32.ChecksumIEEE(data)
 }
 
 // Inicijalizacija Merkle stabla sa datim Element objektima
 func NewMerkleTree(elements []*Element) *MerkleTree {
-	leaves := make([]string, len(elements))
+	leaves := make([]uint32, len(elements))
 	for i, element := range elements {
 		leaves[i] = hashElement(element)
 	}
@@ -81,8 +101,8 @@ func NewMerkleTree(elements []*Element) *MerkleTree {
 	return tree
 }
 
-// Novi konstruktor koji pravi MerkleTree direktno iz CRC32 hash stringova
-func NewMerkleTreeFromHashes(hashes []string) *MerkleTree {
+// Novi konstruktor koji pravi MerkleTree direktno iz CRC32 hash vrednosti
+func NewMerkleTreeFromHashes(hashes []uint32) *MerkleTree {
 	tree := &MerkleTree{
 		Leaves: hashes,
 	}
@@ -91,22 +111,23 @@ func NewMerkleTreeFromHashes(hashes []string) *MerkleTree {
 }
 
 func (mt *MerkleTree) buildTree() {
-	emptyElementHash := hashData("") // Hash za prazan element, tj za element koji ne postoji
+	emptyElementHash := hashData([]byte("")) // Hash za prazan element, tj za element koji ne postoji
 	currentLevel := mt.Leaves
 	mt.TreeLevels = append(mt.TreeLevels, currentLevel) // Prvi nivo su listovi
 
 	for len(currentLevel) > 1 {
-		nextLevel := []string{}
+		nextLevel := []uint32{}
 
 		// Spajamo cvorove u parovima
 		for i := 0; i < len(currentLevel); i += 2 {
+			buf := new(bytes.Buffer)
+			binary.Write(buf, binary.LittleEndian, currentLevel[i])
 			if i+1 < len(currentLevel) {
-				combined := currentLevel[i] + currentLevel[i+1]
-				nextLevel = append(nextLevel, hashData(combined))
+				binary.Write(buf, binary.LittleEndian, currentLevel[i+1])
 			} else {
-				combined := currentLevel[i] + emptyElementHash
-				nextLevel = append(nextLevel, hashData(combined))
+				binary.Write(buf, binary.LittleEndian, emptyElementHash)
 			}
+			nextLevel = append(nextLevel, hashData(buf.Bytes()))
 		}
 		mt.TreeLevels = append(mt.TreeLevels, nextLevel) // Dodajemo novi nivo u stablo
 		currentLevel = nextLevel                         // Prelazimo na sledeci nivo
@@ -114,13 +135,13 @@ func (mt *MerkleTree) buildTree() {
 
 }
 
-func (mt *MerkleTree) getRoot() string {
+func (mt *MerkleTree) getRoot() uint32 {
 	if len(mt.TreeLevels) == 0 {
-		return "" // Ako stablo nema nivoe, vracamo prazan string
+		return 0 // Ako stablo nema nivoe, vracamo 0
 	}
 	lastLevel := mt.TreeLevels[len(mt.TreeLevels)-1]
 	if len(lastLevel) == 0 {
-		return ""
+		return 0
 	}
 	return lastLevel[0]
 
@@ -146,27 +167,9 @@ func serializeMerkleTree(mt *MerkleTree) ([]byte, error) {
 		}
 
 		for _, hash := range level {
-			if config.VariableEncoding {
-				// Varijabilna duzina hash-a
-				hashLen := uint32(len(hash))
-				err = binary.Write(&buf, binary.LittleEndian, hashLen)
-				if err != nil {
-					return nil, err
-				}
-				_, err = buf.WriteString(hash)
-				if err != nil {
-					return nil, err
-				}
-			} else {
-				// Fiksna duzina hash-a (8 bajtova za CRC32)
-				// Hash je string, ali mora biti tacno 8 karaktera
-				if len(hash) != 8 {
-					return nil, fmt.Errorf("hash length is not 8: %s", hash)
-				}
-				_, err = buf.WriteString(hash)
-				if err != nil {
-					return nil, err
-				}
+			err = binary.Write(&buf, binary.LittleEndian, hash)
+			if err != nil {
+				return nil, err
 			}
 		}
 	}
@@ -185,7 +188,7 @@ func deserializeMerkleTree(data []byte) (*MerkleTree, error) {
 		return nil, fmt.Errorf("failed to read level count: %w", err)
 	}
 
-	mt.TreeLevels = make([][]string, levelCount)
+	mt.TreeLevels = make([][]uint32, levelCount)
 
 	for i := uint32(0); i < levelCount; i++ {
 		var hashCount uint32
@@ -194,37 +197,15 @@ func deserializeMerkleTree(data []byte) (*MerkleTree, error) {
 			return nil, fmt.Errorf("failed to read hash count for level %d: %w", i, err)
 		}
 
-		level := make([]string, hashCount)
+		level := make([]uint32, hashCount)
 
 		for j := uint32(0); j < hashCount; j++ {
-			if config.VariableEncoding {
-				// Varijabilna duzina hash-a
-				var hashLen uint32
-				err = binary.Read(buf, binary.LittleEndian, &hashLen)
-				if err != nil {
-					return nil, fmt.Errorf("failed to read hash length: %w", err)
-				}
-				hashBytes := make([]byte, hashLen)
-				bytesRead, err := buf.Read(hashBytes)
-				if err != nil {
-					return nil, fmt.Errorf("failed to read hash: %w", err)
-				}
-				if bytesRead != int(hashLen) {
-					return nil, fmt.Errorf("expected to read %d bytes, got %d", hashLen, bytesRead)
-				}
-				level[j] = string(hashBytes)
-			} else {
-				// Fiksna duzina hash-a (8 bajtova)
-				hashBytes := make([]byte, 8)
-				bytesRead, err := buf.Read(hashBytes)
-				if err != nil {
-					return nil, fmt.Errorf("failed to read fixed hash: %w", err)
-				}
-				if bytesRead != 8 {
-					return nil, fmt.Errorf("expected to read 8 bytes, got %d", bytesRead)
-				}
-				level[j] = string(hashBytes)
+			var hash uint32
+			err = binary.Read(buf, binary.LittleEndian, &hash)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read hash: %w", err)
 			}
+			level[j] = hash
 		}
 		mt.TreeLevels[i] = level
 	}
@@ -245,7 +226,7 @@ func testSerialization() {
 	// Kreiramo originalno stablo
 	original := NewMerkleTree(testElements)
 
-	// Serijalizujumo
+	// Serijalizujemo
 	serialized, err := serializeMerkleTree(original)
 	if err != nil {
 		fmt.Printf("Serialization error: %v\n", err)
@@ -260,15 +241,15 @@ func testSerialization() {
 	}
 
 	// Uporedjujemo root hash-ove
-	fmt.Printf("Original Root:     %s\n", original.getRoot())
-	fmt.Printf("Deserialized Root: %s\n", deserialized.getRoot())
+	fmt.Printf("Original Root:     %d\n", original.getRoot())
+	fmt.Printf("Deserialized Root: %d\n", deserialized.getRoot())
 	fmt.Printf("Roots match: %t\n", original.getRoot() == deserialized.getRoot())
 }
 
 // Struktura za rezultat validacije
 type ValidationResult struct {
 	IsValid         bool
-	CorruptedLevels []int // Nivoi gde su detektovane greske
+	CorruptedHashes []uint32 // Hash vrednosti cvorova koji su razliciti
 	ErrorMessage    string
 }
 
@@ -276,7 +257,7 @@ type ValidationResult struct {
 func ValidateSSTableNodeByNode(currentTree *MerkleTree, originalElements []*Element) *ValidationResult {
 	result := &ValidationResult{
 		IsValid:         true,
-		CorruptedLevels: []int{},
+		CorruptedHashes: []uint32{},
 		ErrorMessage:    "",
 	}
 
@@ -320,18 +301,8 @@ func validateNodeRecursive(currentTree, expectedTree *MerkleTree,
 
 	// Poredimo trenutni cvor
 	if currentLevel[nodeIndex] != expectedLevel[nodeIndex] {
-		// Ovaj cvor je razlicit - oznacavamo nivo kao pokvaren
-		levelAlreadyMarked := false
-		for _, corruptedLevel := range result.CorruptedLevels {
-			if corruptedLevel == levelIndex {
-				levelAlreadyMarked = true
-				break
-			}
-		}
-		if !levelAlreadyMarked {
-			result.CorruptedLevels = append(result.CorruptedLevels, levelIndex)
-			result.ErrorMessage += fmt.Sprintf(" Nivo %d: cvor %d se razlikuje.", levelIndex, nodeIndex)
-		}
+		result.CorruptedHashes = append(result.CorruptedHashes, currentLevel[nodeIndex])
+		result.ErrorMessage += fmt.Sprintf(" CRC32: %d (level %d, node %d) se razlikuje.", currentLevel[nodeIndex], levelIndex, nodeIndex)
 
 		// Idemo na decu ovog cvora (levo i desno dete)
 		if levelIndex > 0 { // Ako nismo na listovima
@@ -363,7 +334,7 @@ func UserValidateSSTable() {
 
 	// Kreiramo trenutno stablo
 	currentTree := NewMerkleTree(originalSSTableElements)
-	fmt.Printf("Trenutni root: %s\n", currentTree.getRoot())
+	fmt.Printf("Trenutni root: %d\n", currentTree.getRoot())
 
 	// Test 1: Validacija neizmenjene SSTable
 	fmt.Println("\n1. Validacija originalne SSTable:")
@@ -375,11 +346,11 @@ func UserValidateSSTable() {
 	fmt.Println("\n2. Simulacija izmene u SSTable:")
 	corruptedTree := NewMerkleTree(originalSSTableElements)
 	if len(corruptedTree.TreeLevels) > 0 && len(corruptedTree.TreeLevels[0]) > 0 {
-		corruptedTree.TreeLevels[0][0] = "CORRUPTED_HASH"
+		corruptedTree.TreeLevels[0][0] = hashData([]byte("izmenjeni_hash"))
 	}
 	result = ValidateSSTableNodeByNode(corruptedTree, originalSSTableElements)
 	fmt.Printf("   Status: %t\n", result.IsValid)
-	fmt.Printf("   Pokvareni nivoi: %v\n", result.CorruptedLevels)
+	fmt.Printf("   Pokvareni CRC32: %v\n", result.CorruptedHashes)
 	fmt.Printf("   Poruka: %s\n", result.ErrorMessage)
 
 	// Test 3: Izmena stvarnih podataka
@@ -392,7 +363,7 @@ func UserValidateSSTable() {
 	modifiedTree := NewMerkleTree(modifiedElements)
 	result = ValidateSSTableNodeByNode(modifiedTree, originalSSTableElements)
 	fmt.Printf("   Status: %t\n", result.IsValid)
-	fmt.Printf("   Pokvareni nivoi: %v\n", result.CorruptedLevels)
+	fmt.Printf("   Pokvareni CRC32: %v\n", result.CorruptedHashes)
 	fmt.Printf("   Poruka: %s\n", result.ErrorMessage)
 }
 
