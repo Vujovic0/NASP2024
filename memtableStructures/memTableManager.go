@@ -1,6 +1,7 @@
 package memtableStructures
 
 import (
+	"encoding/binary"
 	"fmt"
 	"sort"
 
@@ -44,21 +45,14 @@ func (mtm *MemTableManager) Search(key string) (*Element, bool) {
 	return nil, false
 }
 
-// Staroo
-// func (mtm *MemTableManager) FlushActive() {
-// 	fmt.Println("Aktivna memtable je puna...")
-
-// 	// Prebacujemo aktivnu tabelu u read-only
-// 	mtm.immutables = append([]*MemoryTable{mtm.active}, mtm.immutables...)
-
-// 	// Sada proveravamo da li ih ima n (n-1 read-only + 1 aktivna koja je sada postala read-only)
-// 	if len(mtm.immutables) > mtm.maxImmutables {
-// 		fmt.Println("SVE tabele su pune! Flushujem SVE na disk...")
-// 		mtm.FlushAll()
-// 	}
-
-// 	mtm.active = initializeMemoryTable()
-// }
+func (mtm *MemTableManager) convertToSSTableFormat(elements []Element) []byte {
+	var data []byte
+	for _, elem := range elements {
+		entry := elementToEntry(elem)
+		data = append(data, ssTable.SerializeEntry(entry, false)...)
+	}
+	return data
+}
 
 // func (mtm *MemTableManager) convertToSSTableFormat(elements []Element) []byte {
 // 	var data []byte
@@ -66,7 +60,7 @@ func (mtm *MemTableManager) Search(key string) (*Element, bool) {
 // 	for _, elem := range elements {
 // 		entry := make([]byte, 0)
 
-// 		// CRC (4 bytes) - calculate later
+// 		// CRC (4 bytes)
 // 		entry = append(entry, make([]byte, 4)...)
 
 // 		// Timestamp (8 bytes)
@@ -81,56 +75,38 @@ func (mtm *MemTableManager) Search(key string) (*Element, bool) {
 // 			entry = append(entry, 0)
 // 		}
 
-// 		// Key size (8 bytes)
+// 		// Duzina kljuca (8 bytes)
 // 		keySizeBytes := make([]byte, 8)
 // 		binary.LittleEndian.PutUint64(keySizeBytes, uint64(len(elem.Key)))
 // 		entry = append(entry, keySizeBytes...)
 
+// 		// Duzina vrednosti (8 bytes) - samo ako nije tombstone
 // 		if !elem.Tombstone {
-// 			// Value size (8 bytes) - only for non-tombstone
 // 			valueSizeBytes := make([]byte, 8)
 // 			binary.LittleEndian.PutUint64(valueSizeBytes, uint64(len(elem.Value)))
 // 			entry = append(entry, valueSizeBytes...)
 // 		}
 
-// 		// Key
+// 		// Kljuc
 // 		entry = append(entry, []byte(elem.Key)...)
 
+// 		// Vrednost - samo ako nije tombstone
 // 		if !elem.Tombstone {
-// 			// Value - only for non-tombstone
 // 			entry = append(entry, elem.Value...)
 // 		}
 
-// 		// Calculate CRC for everything except first 4 bytes
-// 		crc := crc32.ChecksumIEEE(entry[4:])
+// 		// Racunamo CRC32 za sve osim prva 4 bajta
+// 		crc := binary.LittleEndian.Uint32(entry[4:])
+// 		crc = 0                           // ispravno: koristi crc32.ChecksumIEEE(entry[4:])
+// 		copy(entry[0:4], make([]byte, 4)) // ispravno: binary.LittleEndian.PutUint32(entry[0:4], crc)
+// 		crc = crc32.ChecksumIEEE(entry[4:])
 // 		binary.LittleEndian.PutUint32(entry[0:4], crc)
 
 // 		data = append(data, entry...)
 // 	}
 
-//		return data
-//	}
-//
-//	func (mtm *MemTableManager) convertToSSTableFormat(elements []Element) []byte {
-//		var data []byte
-//		for _, elem := range elements {
-//			data = append(data, ssTable.SerializeEntry(
-//				elem.Key,
-//				string(elem.Value),
-//				elem.Tombstone,
-//				false, // keyOnly = false
-//			)...)
-//		}
-//		return data
-//	}
-func (mtm *MemTableManager) convertToSSTableFormat(elements []Element) []byte {
-	var data []byte
-	for _, elem := range elements {
-		entry := elementToEntry(elem)
-		data = append(data, ssTable.SerializeEntry(entry, false)...)
-	}
-	return data
-}
+// 	return data
+// }
 
 func (mtm *MemTableManager) SearchByPrefix(prefix string) ([]*Element, bool) {
 	var allResults []*Element
@@ -506,10 +482,20 @@ func (mtm *MemTableManager) FlushOldest(count int) {
 		}
 	}
 
-	fmt.Println("ajstarije tabele flush-ovane!")
+	fmt.Println("Najstarije tabele flush-ovane!")
 }
 func elementToEntry(elem Element) *ssTable.Entry {
 	return ssTable.InitEntry(0, elem.Tombstone, uint64(elem.Timestamp), []byte(elem.Key), elem.Value)
+}
+func getCRC32HashesForMerkle(elements []Element) []uint32 {
+	var hashes []uint32
+	for _, elem := range elements {
+		entry := elementToEntry(elem)
+		serialized := ssTable.SerializeEntry(entry, false)
+		crc := binary.LittleEndian.Uint32(serialized[:4])
+		hashes = append(hashes, crc)
+	}
+	return hashes
 }
 
 func main() {
@@ -529,6 +515,16 @@ func main() {
 		mtm.Insert(key, []byte(value))
 		fmt.Printf("Insertovan: %s -> %s\n", key, value)
 	}
+
+	var elements []Element
+	elements = append(elements, mtm.active.Flush()...)
+	for _, mt := range mtm.immutables {
+		elements = append(elements, mt.Flush()...)
+	}
+
+	hashes := getCRC32HashesForMerkle(elements)
+	merkleTree := ssTable.NewMerkleTreeFromHashes(hashes)
+	fmt.Printf(" ======= Merkle root: %d\n", merkleTree.GetRoot())
 
 	fmt.Println("\n MANUAL FLUSH TEST ")
 
@@ -550,4 +546,5 @@ func main() {
 	} else {
 		fmt.Println("Nema rezultata za dati prefix nakon flush-a.")
 	}
+
 }
