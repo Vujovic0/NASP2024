@@ -13,6 +13,10 @@ import (
 	"github.com/Vujovic0/NASP2024/config"
 )
 
+func ensureFolderExists(path string) error {
+	return os.MkdirAll(path, 0755)
+}
+
 // Helper functions
 func checkEqual(t *testing.T, got, want interface{}, msg string) {
 	t.Helper()

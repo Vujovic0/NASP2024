@@ -55,7 +55,7 @@ func LoadAllElements(path string) []Element {
 
 			elements = append(elements, Element{
 				Key:       string(key),
-				Value:     decoded,
+				Value:     []byte(decoded),
 				Timestamp: timestamp,
 				Tombstone: tombstone == 1,
 			})
@@ -128,7 +128,7 @@ func ReadSSTable(path string) ([]Element, error) {
 
 		elements = append(elements, Element{
 			Key:       string(key),
-			Value:     string(val),
+			Value:     val,
 			Timestamp: int64(timestamp),
 			Tombstone: tomb[0] == 1,
 		})
@@ -158,7 +158,7 @@ func ReadSSTableWithDecompression(path string, dictPath string) ([]Element, erro
 	}
 
 	for i := range entries {
-		parts := strings.Split(entries[i].Value, "|")
+		parts := strings.Split(string(entries[i].Value), "|")
 		var val strings.Builder
 		for _, p := range parts {
 			if len(p) == 0 {
@@ -168,8 +168,91 @@ func ReadSSTableWithDecompression(path string, dictPath string) ([]Element, erro
 			word := decoded[idx]
 			val.WriteString(word)
 		}
-		entries[i].Value = val.String()
+		entries[i].Value = []byte(val.String())
 	}
 
 	return entries, nil
+}
+
+func findCompact(path string, key []byte) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	blockOffset := uint64(0)
+	var (
+		dataBlockCheck bool = true
+		tombstone      bool
+		keyBytes       []byte
+		valueBytes     []byte
+		keySizeLeft    uint64
+		valueSizeLeft  uint64
+		lastValue      []byte
+	)
+
+	for {
+		block := blockManager.ReadBlock(file, blockOffset)
+		if block == nil {
+			break
+		}
+
+		switch block.GetType() {
+		case 0:
+			keys, values, err := GetKeysType0(block, dataBlockCheck, 0)
+			if err != nil {
+				return nil, err
+			}
+			index := FindLastSmallerKey(key, keys, dataBlockCheck, false)
+			if index == -2 {
+				if len(lastValue) == 0 {
+					return nil, nil
+				}
+				return lastValue, nil
+			}
+			if index != -1 {
+				return values[index], nil
+			}
+			lastValue = values[len(values)-1]
+		case 1:
+			keyBytes, valueBytes, keySizeLeft, valueSizeLeft, err = GetKeysType1(block, dataBlockCheck, 0)
+			if err != nil {
+				return nil, err
+			}
+			tombstone = dataBlockCheck && len(valueBytes) == 0 && valueSizeLeft == 0
+		case 2:
+			var k, v []byte
+			k, v, keySizeLeft, valueSizeLeft, err = GetKeysType2(block, keySizeLeft, valueSizeLeft, tombstone, dataBlockCheck)
+			if err != nil {
+				return nil, err
+			}
+			keyBytes = append(keyBytes, k...)
+			valueBytes = append(valueBytes, v...)
+		case 3:
+			var k, v []byte
+			k, v, err = GetKeysType3(block, keySizeLeft, valueSizeLeft, tombstone, dataBlockCheck)
+			if err != nil {
+				return nil, err
+			}
+			keyBytes = append(keyBytes, k...)
+			valueBytes = append(valueBytes, v...)
+			cmp := bytes.Compare(keyBytes, key)
+			if cmp == 0 {
+				return valueBytes, nil
+			} else if cmp > 0 {
+				if len(lastValue) == 0 {
+					return nil, nil
+				}
+				return lastValue, nil
+			}
+			lastValue = valueBytes
+			keyBytes = keyBytes[:0]
+			valueBytes = valueBytes[:0]
+			keySizeLeft, valueSizeLeft = 0, 0
+			tombstone = false
+		}
+		blockOffset++
+	}
+	return lastValue, nil
 }

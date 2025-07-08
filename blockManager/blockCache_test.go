@@ -7,8 +7,8 @@ import (
 
 func TestBlockCache_AddBlock(t *testing.T) {
 	cache := InitBlockCache[*Block](2)
-	block1 := &Block{filePath: "file1.txt", offset: 0, data: []byte("block1")}
-	block2 := &Block{filePath: "file1.txt", offset: 1, data: []byte("block2")}
+	block1 := &Block{filePath: "file1.txt", Offset: 0, data: []byte("block1")}
+	block2 := &Block{filePath: "file1.txt", Offset: 1, data: []byte("block2")}
 
 	cache.addBlock(block1)
 	cache.addBlock(block2)
@@ -26,7 +26,7 @@ func TestBlockCache_AddBlock(t *testing.T) {
 
 func TestBlockCache_FindBlock(t *testing.T) {
 	cache := InitBlockCache[*Block](2)
-	block1 := &Block{filePath: "file1.txt", offset: 0, data: []byte("block1")}
+	block1 := &Block{filePath: "file1.txt", Offset: 0, data: []byte("block1")}
 	cache.addBlock(block1)
 
 	retrieved, found := cache.findBlock("file1.txt", 0)
@@ -40,9 +40,9 @@ func TestBlockCache_FindBlock(t *testing.T) {
 
 func TestBlockCache_Eviction(t *testing.T) {
 	cache := InitBlockCache[*Block](2)
-	block1 := &Block{filePath: "file1.txt", offset: 0, data: []byte("block1")}
-	block2 := &Block{filePath: "file1.txt", offset: 1, data: []byte("block2")}
-	block3 := &Block{filePath: "file1.txt", offset: 2, data: []byte("block3")}
+	block1 := &Block{filePath: "file1.txt", Offset: 0, data: []byte("block1")}
+	block2 := &Block{filePath: "file1.txt", Offset: 1, data: []byte("block2")}
+	block3 := &Block{filePath: "file1.txt", Offset: 2, data: []byte("block3")}
 
 	cache.addBlock(block1)
 	cache.addBlock(block2)
@@ -64,9 +64,9 @@ func TestBlockCache_Eviction(t *testing.T) {
 
 func TestBlockGetAndUpdate(t *testing.T) {
 	cache := InitBlockCache[*Block](2)
-	block1 := &Block{filePath: "file1.txt", offset: 0, data: []byte("block1")}
-	block2 := &Block{filePath: "file1.txt", offset: 1, data: []byte("block2")}
-	block3 := &Block{filePath: "file1.txt", offset: 2, data: []byte("block3")}
+	block1 := &Block{filePath: "file1.txt", Offset: 0, data: []byte("block1")}
+	block2 := &Block{filePath: "file1.txt", Offset: 1, data: []byte("block2")}
+	block3 := &Block{filePath: "file1.txt", Offset: 2, data: []byte("block3")}
 	cache.addBlock(block1)
 	cache.addBlock(block2)
 	cache.addBlock(block3)
@@ -86,8 +86,8 @@ func TestBlockGetAndUpdate(t *testing.T) {
 
 func TestOverwrite(t *testing.T) {
 	cache := InitBlockCache[*Block](2)
-	block1 := &Block{filePath: "file1.txt", offset: 0, data: []byte("block1")}
-	block2 := &Block{filePath: "file1.txt", offset: 0, data: []byte("block2")}
+	block1 := &Block{filePath: "file1.txt", Offset: 0, data: []byte("block1")}
+	block2 := &Block{filePath: "file1.txt", Offset: 0, data: []byte("block2")}
 	cache.addBlock(block1)
 	cache.addBlock(block2)
 
@@ -95,7 +95,7 @@ func TestOverwrite(t *testing.T) {
 	if !bytes.Equal(block2.data, cachedBlock.data) {
 		t.Errorf("Expected block1 to be overwritten")
 	}
-	if cache.size > 1{
+	if cache.size > 1 {
 		t.Errorf("Expected cache size to be 1")
 	}
 }

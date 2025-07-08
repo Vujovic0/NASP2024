@@ -15,16 +15,16 @@ func TestEntryHeapOrdering(t *testing.T) {
 		{
 			name: "basic ordering",
 			input: []*Entry{
-				{key: []byte("delta")},
-				{key: []byte("alpha")},
-				{key: []byte("charlie")},
-				{key: []byte("bravo")},
+				{Key: []byte("delta")},
+				{Key: []byte("alpha")},
+				{Key: []byte("charlie")},
+				{Key: []byte("bravo")},
 			},
 			expected: []*Entry{
-				{key: []byte("alpha")},
-				{key: []byte("bravo")},
-				{key: []byte("charlie")},
-				{key: []byte("delta")},
+				{Key: []byte("alpha")},
+				{Key: []byte("bravo")},
+				{Key: []byte("charlie")},
+				{Key: []byte("delta")},
 			},
 		},
 		{
@@ -35,25 +35,25 @@ func TestEntryHeapOrdering(t *testing.T) {
 		{
 			name: "duplicates",
 			input: []*Entry{
-				{key: []byte("echo")},
-				{key: []byte("echo")},
-				{key: []byte("alpha")},
-				{key: []byte("alpha")},
+				{Key: []byte("echo")},
+				{Key: []byte("echo")},
+				{Key: []byte("alpha")},
+				{Key: []byte("alpha")},
 			},
 			expected: []*Entry{
-				{key: []byte("alpha")},
-				{key: []byte("alpha")},
-				{key: []byte("echo")},
-				{key: []byte("echo")},
+				{Key: []byte("alpha")},
+				{Key: []byte("alpha")},
+				{Key: []byte("echo")},
+				{Key: []byte("echo")},
 			},
 		},
 		{
 			name: "single element",
 			input: []*Entry{
-				{key: []byte("single")},
+				{Key: []byte("single")},
 			},
 			expected: []*Entry{
-				{key: []byte("single")},
+				{Key: []byte("single")},
 			},
 		},
 	}
@@ -78,8 +78,8 @@ func TestEntryHeapOrdering(t *testing.T) {
 			}
 
 			for i := range got {
-				if !bytes.Equal(got[i].key, tc.expected[i].key) {
-					t.Errorf("At index %d: expected key %s, got %s", i, tc.expected[i].key, got[i].key)
+				if !bytes.Equal(got[i].Key, tc.expected[i].Key) {
+					t.Errorf("At index %d: expected key %s, got %s", i, tc.expected[i].Key, got[i].Key)
 				}
 			}
 		})

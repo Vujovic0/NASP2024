@@ -3,6 +3,7 @@ package ssTable
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"hash/crc32"
 	"os"
 	"path/filepath"
@@ -223,21 +224,16 @@ func getGeneration(increment bool) uint64 {
 // Entires of data are |CRC|TIMESTAMP|TOMBSTONE|KEYSIZE|VALUESIZE|KEY|VALUE
 func CreateCompactSSTable(data []byte, lastElementData []byte, summary_sparsity int, index_sparsity int) {
 	dataPath := getDataPath()
-	if _, err := os.Stat(dataPath); os.IsNotExist(err) {
-		err := os.Mkdir(dataPath, 0755)
-		if err != nil {
-			panic(err)
-		}
-		err = os.Mkdir(dataPath+string(os.PathSeparator)+"L0", 0755)
-		if err != nil {
-			panic(err)
-		}
+	l0Dir := filepath.Join(dataPath, "L0")
+
+	if err := os.MkdirAll(l0Dir, 0755); err != nil {
+		panic(err)
 	}
 
 	generation := getGeneration(true)
+	fileName := filepath.Join(l0Dir, "usertable-"+strconv.FormatUint(uint64(generation), 10)+"-compact.bin")
 
-	fileName := dataPath + string(os.PathSeparator) + "L0" + string(os.PathSeparator) + "usertable-" + strconv.FormatUint(uint64(generation), 10) + "-compact.bin"
-	file, err := os.OpenFile(fileName, os.O_CREATE, 0664)
+	file, err := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0664)
 	if err != nil {
 		panic(err)
 	}
@@ -254,7 +250,7 @@ func CreateCompactSSTable(data []byte, lastElementData []byte, summary_sparsity 
 	var indexStart uint64 = 0
 	var footerStart uint64 = 0
 
-	//Creates the data segment while preparing data for the index segment
+	// Creates the data segment while preparing data for the index segment
 	for channelResult := range PrepareSSTableBlocks(fileName, data, true, 0, false) {
 		blockManager.WriteBlock(file, channelResult.Block)
 		blockCounter += 1
@@ -279,7 +275,7 @@ func CreateCompactSSTable(data []byte, lastElementData []byte, summary_sparsity 
 	indexStart = blockCounter
 	counter = 0
 
-	//Creates the index segment while preparing data for the summary segment
+	// Creates the index segment while preparing data for the summary segment
 	for channelResult := range PrepareSSTableBlocks(fileName, indexData, false, blockCounter, false) {
 		blockManager.WriteBlock(file, channelResult.Block)
 		blockCounter += 1
@@ -302,7 +298,7 @@ func CreateCompactSSTable(data []byte, lastElementData []byte, summary_sparsity 
 
 	summaryStart = blockCounter
 
-	//Creates summary segment
+	// Creates summary segment
 	for channelResult := range PrepareSSTableBlocks(fileName, summaryData, false, blockCounter, false) {
 		blockManager.WriteBlock(file, channelResult.Block)
 		blockCounter += 1
@@ -310,6 +306,7 @@ func CreateCompactSSTable(data []byte, lastElementData []byte, summary_sparsity 
 
 	boundStart := blockCounter
 
+	// Writes last element data segment
 	for channelResult := range PrepareSSTableBlocks(fileName, lastElementData, false, blockCounter, true) {
 		blockManager.WriteBlock(file, channelResult.Block)
 		blockCounter += 1
@@ -317,21 +314,37 @@ func CreateCompactSSTable(data []byte, lastElementData []byte, summary_sparsity 
 
 	footerStart = blockCounter
 
-	var footerData []byte = make([]byte, 0)
+	// Prepare footer data in order: indexStart, summaryStart, boundStart, footerStart
+	footerData := make([]byte, 0)
 
-	footerData = binary.LittleEndian.AppendUint64(footerData, footerStart)
 	footerData = binary.LittleEndian.AppendUint64(footerData, indexStart)
 	footerData = binary.LittleEndian.AppendUint64(footerData, summaryStart)
 	footerData = binary.LittleEndian.AppendUint64(footerData, boundStart)
+	footerData = binary.LittleEndian.AppendUint64(footerData, footerStart)
 
-	var blockData []byte = make([]byte, 9+len(footerData))
-	copy(blockData[9:], footerData)
-	blockData[4] = 0
-	binary.LittleEndian.PutUint32(blockData[0:4], crc32.ChecksumIEEE(blockData[4:]))
-	binary.LittleEndian.PutUint32(blockData[5:9], uint32(len(footerData)))
+	// Create footer block with 8 bytes header (4 bytes crc32 + 4 bytes length)
+	blockData := make([]byte, 8+len(footerData))
+	copy(blockData[8:], footerData)
+
+	crc := crc32.ChecksumIEEE(blockData[8:])
+	binary.LittleEndian.PutUint32(blockData[0:4], crc)
+	binary.LittleEndian.PutUint32(blockData[4:8], uint32(len(footerData)))
 
 	block := blockManager.InitBlock(fileName, blockCounter, blockData)
 	blockManager.WriteBlock(file, block)
+
+	// Make sure all data is flushed to disk
+	if err := file.Sync(); err != nil {
+		panic(err)
+	}
+
+	// Debug info
+	info, err := os.Stat(fileName)
+	if err != nil {
+		fmt.Println("Error stating file:", err)
+	} else {
+		fmt.Println("Compact SSTable file size:", info.Size())
+	}
 }
 
 // Entires of summary and index are of fomrat |KEYSIZE|VALUESIZE|KEY|VALUE|
@@ -339,37 +352,32 @@ func CreateCompactSSTable(data []byte, lastElementData []byte, summary_sparsity 
 // Entires of data are |CRC|TIMESTAMP|TOMBSTONE|KEYSIZE|VALUESIZE|KEY|VALUE
 func CreateSeparatedSSTable(data []byte, lastElementData []byte, summary_sparsity int, index_sparsity int) {
 	dataPath := getDataPath()
-	if _, err := os.Stat(dataPath); os.IsNotExist(err) {
-		err := os.Mkdir(dataPath, 0755)
-		if err != nil {
-			panic(err)
-		}
-		err = os.Mkdir(dataPath+string(os.PathSeparator)+"L0", 0755)
-		if err != nil {
-			panic(err)
-		}
+	l0Dir := filepath.Join(dataPath, "L0")
+
+	if err := os.MkdirAll(l0Dir, 0755); err != nil {
+		panic(err)
 	}
 
 	generation := getGeneration(true)
 
-	fileName := dataPath + string(os.PathSeparator) + "L0" + string(os.PathSeparator) + "usertable-" + strconv.FormatUint(uint64(generation), 10)
+	fileName := filepath.Join(l0Dir, "usertable-"+strconv.FormatUint(uint64(generation), 10))
 	FILEDATAPATH := fileName + "-data.bin"
 	FILEINDEXPATH := fileName + "-index.bin"
 	FILESUMMARYPATH := fileName + "-summary.bin"
 
-	fileData, err := os.OpenFile(FILEDATAPATH, os.O_CREATE, 0664)
+	fileData, err := os.OpenFile(FILEDATAPATH, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0664)
 	if err != nil {
 		panic(err)
 	}
 	defer fileData.Close()
 
-	fileIndex, err := os.OpenFile(FILEINDEXPATH, os.O_CREATE, 0664)
+	fileIndex, err := os.OpenFile(FILEINDEXPATH, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0664)
 	if err != nil {
 		panic(err)
 	}
 	defer fileIndex.Close()
 
-	fileSummary, err := os.OpenFile(FILESUMMARYPATH, os.O_CREATE, 0664)
+	fileSummary, err := os.OpenFile(FILESUMMARYPATH, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0664)
 	if err != nil {
 		panic(err)
 	}

@@ -1,9 +1,10 @@
 package blockManager
 
 import (
-	"github.com/Vujovic0/NASP2024/config"
 	"io"
 	"os"
+
+	"github.com/Vujovic0/NASP2024/config"
 )
 
 const (
@@ -21,10 +22,19 @@ var blockSize = config.GlobalBlockSize
 // If it is in cache, it shallow copies the new one and assigns it to the old one
 // findBlock function moves the block up to be first if it is found
 // After adding to cache, it writes to file
-func WriteBlock(file *os.File, block *Block) {
+func WriteBlock(file *os.File, block *Block) error {
 	bc.addBlock(block)
-	file.Seek(int64(block.GetOffset()*uint64(blockSize)), 0)
-	file.Write(block.GetData())
+	offset := int64(block.GetOffset())
+	_, err := file.Seek(offset, io.SeekStart)
+	if err != nil {
+		return err
+	}
+
+	_, err = file.Write(block.GetData())
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // Takes pointer to file and offset of block that it should read. Returns pointer to read block

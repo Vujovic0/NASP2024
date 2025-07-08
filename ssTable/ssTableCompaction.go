@@ -5,6 +5,7 @@ import (
 	"container/heap"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"hash/crc32"
 	"math"
 	"os"
@@ -20,6 +21,16 @@ type Tracker struct {
 	dataTracker    *DataTracker
 	indexTracker   *IndexTracker
 	summaryTracker *SummaryTracker
+}
+
+type Footer struct {
+	MaxKeyOffset uint64
+}
+
+type FileTracker struct {
+	DataFile   *os.File // fajl iz kog čitaš blokove
+	DataBuffer []byte   // alternativa ako koristiš mmap ili ucitano u RAM
+	Footer     Footer   // sadrži MaxKeyOffset itd.
 }
 
 type DataTracker struct {
@@ -44,6 +55,7 @@ type SummaryTracker struct {
 	offsetStart      uint64   //at what block does summary start (useful if compact)
 	lastElementStart uint64   //at what block does last element start
 	sparsity_counter uint64   //when sparsity_counter moduo global sparsity value equals 0, write to summary data
+	path             string
 }
 
 func initTracker() *Tracker {
@@ -62,7 +74,7 @@ type Entry struct {
 	crc       uint32
 	timeStamp uint64
 	tombstone bool
-	key       []byte
+	Key       []byte
 	value     []byte
 }
 
@@ -71,16 +83,17 @@ func initEntry(crc uint32, tombstone bool, timeStamp uint64, key []byte, value [
 		crc:       crc,
 		tombstone: tombstone,
 		timeStamp: timeStamp,
-		key:       key,
+		Key:       key,
 		value:     value,
 	}
 }
+
 func InitEntry(crc uint32, tombstone bool, timeStamp uint64, key []byte, value []byte) *Entry {
 	return &Entry{
 		crc:       crc,
 		tombstone: tombstone,
 		timeStamp: timeStamp,
-		key:       key,
+		Key:       key,
 		value:     value,
 	}
 }
@@ -106,22 +119,44 @@ func checkLimit(offset uint64, limit uint64) (error, bool) {
 // Returns array of entry pointers, new block offset.
 // Returns error if block type is other than 0 or 1.
 func getBlockEntries(file *os.File, offset uint64, limit uint64) ([]*Entry, uint64, error) {
+	// Proveri da li je offset van limita
 	err, endCheck := checkLimit(offset, limit)
 	if err != nil {
-		return nil, 0, err
+		return nil, offset, err
 	} else if endCheck {
 		return nil, offset, nil
 	}
+
 	var entryArray []*Entry
-	var block *blockManager.Block = blockManager.ReadBlock(file, offset)
-	if block.GetType() == 0 {
+
+	block := blockManager.ReadBlock(file, offset)
+	if block == nil {
+		return nil, offset, fmt.Errorf("failed to read block at offset %d", offset)
+	}
+
+	blockType := block.GetType()
+	switch blockType {
+	case 0:
 		entryArray, err = getBlockEntriesTypeFull(block)
 		offset += 1
-	} else if block.GetType() == 1 {
+	case 1:
 		entryArray, offset, err = getBlockEntriesTypeSplit(block, file, offset, limit)
-	} else {
-		return nil, 0, errors.New("block type should be 0 or 1")
+	default:
+		return nil, offset, fmt.Errorf("unknown block type %d", blockType)
 	}
+
+	// Validacija: nema ni jednog validnog entry-ja
+	if len(entryArray) == 0 {
+		return nil, offset, nil
+	}
+
+	// Provera da entry-ji nisu nil i imaju ključ
+	for _, e := range entryArray {
+		if e == nil || len(e.Key) == 0 {
+			return nil, offset, fmt.Errorf("invalid entry in block at offset %d", offset)
+		}
+	}
+
 	return entryArray, offset, err
 }
 
@@ -316,113 +351,140 @@ func getLimits(files []*os.File) []uint64 {
 // Folder where the new file should be needs to be created in advance
 // File pointers need to be sorted from oldest to newest sstable
 func MergeTables(filesArg []*os.File, newFilePath string) {
+	fmt.Println("Merging tables into:", newFilePath)
+
 	files := make([]*os.File, len(filesArg))
-	copy(files, filesArg)                                     //copies so the filesArg isn't updated while this function is running
-	var entryArrays [][]*Entry = make([][]*Entry, len(files)) //entries for each iteration of block read are put here
+	copy(files, filesArg)
 
-	var tableLimits []uint64 = getLimits(files) //array of limits for all files
-	var filesBlockOffsets []uint64 = make([]uint64, len(files))
+	entryArrays := make([][]*Entry, len(files))
+	tableLimits := getLimits(files)
+	filesBlockOffsets := make([]uint64, len(files))
 
-	var tracker *Tracker = new(Tracker)
-	tracker.dataTracker = new(DataTracker)
-	tracker.indexTracker = new(IndexTracker)
-	tracker.summaryTracker = new(SummaryTracker)
+	tracker := initTracker()
 
-	var entryTableIndexMap map[*Entry]int = make(map[*Entry]int)
-	var keyEntryMap map[string]*Entry = make(map[string]*Entry)
+	entryTableIndexMap := make(map[*Entry]int)
+	keyEntryMap := make(map[string]*Entry)
 	entryHeap := &EntryHeap{}
 	heap.Init(entryHeap)
+
+	// VAŽNO: defineTracker očekuje putanju do data fajla (ako koristiš odvojene fajlove)
+	// Zato treba poslati putanju bez suffixa 'compact.bin'
+	// Pretpostavimo da želimo da generišemo odvojene fajlove:
+
+	// Ako je newFilePath sa suffixom "-compact.bin", izmeni ga u suffix "-data.bin"
+	if strings.HasSuffix(newFilePath, "compact.bin") {
+		newFilePath = strings.TrimSuffix(newFilePath, "compact.bin") + "data.bin"
+	}
+
 	defineTracker(newFilePath, tracker)
 
-	var err error
-
-	//fills up heap and a map with entries and the index of their file
-	for i := 0; i < len(entryArrays); i++ {
-		if len(entryArrays[i]) == 0 {
-			entryArrays[i], filesBlockOffsets[i], err = getBlockEntries(files[i], filesBlockOffsets[i], tableLimits[i])
-		}
-		if err != nil {
-			panic(err)
-		}
-		if len(entryArrays[i]) == 0 {
+	for i := 0; i < len(files); i++ {
+		var err error
+		entryArrays[i], filesBlockOffsets[i], err = getBlockEntries(files[i], filesBlockOffsets[i], tableLimits[i])
+		if err != nil || len(entryArrays[i]) == 0 || entryArrays[i][0] == nil {
 			continue
 		}
 
 		entry := entryArrays[i][0]
-		keyStr := string(entry.key)
+		keyStr := string(entry.Key)
+		if keyStr == "" {
+			continue
+		}
+
 		if _, exists := keyEntryMap[keyStr]; exists {
-			updateTableElement(
-				tableLimits,
-				files,
-				entryTableIndexMap,
-				keyEntryMap,
-				entryHeap,
-				entryArrays,
-				filesBlockOffsets,
-				i)
+			updateTableElement(tableLimits, files, entryTableIndexMap, keyEntryMap, entryHeap, entryArrays, filesBlockOffsets, i)
 		} else {
 			keyEntryMap[keyStr] = entry
 			entryTableIndexMap[entry] = i
-			heap.Push(entryHeap, keyStr)
+			heap.Push(entryHeap, entry)
 		}
 	}
 
 	for entryHeap.Len() > 0 {
-		minKey := heap.Pop(entryHeap).(string)
-		minEntry := keyEntryMap[minKey]
+		minEntry := heap.Pop(entryHeap).(*Entry)
+		minKey := string(minEntry.Key)
 		tableIndex := entryTableIndexMap[minEntry]
-		entryArrays[tableIndex] = entryArrays[tableIndex][1:]
-		delete(entryTableIndexMap, minEntry)
-		delete(keyEntryMap, minKey)
 
 		if !minEntry.tombstone {
 			serializedEntry := SerializeEntry(minEntry, false)
 			tracker.summaryTracker.lastEntry = minEntry
+			fmt.Printf("Flushing entry: key=%s, value=%s\n", minEntry.Key, minEntry.value)
+			fmt.Printf("Tracker data file is nil? %v\n", tracker.dataTracker.file == nil)
+			fmt.Printf("Tracker data buffer is nil? %v\n", tracker.dataTracker.data == nil)
+
 			flushDataIfFull(tracker, serializedEntry)
 		}
 
+		delete(entryTableIndexMap, minEntry)
+		delete(keyEntryMap, minKey)
+
+		entryArrays[tableIndex] = entryArrays[tableIndex][1:]
+
 		if len(entryArrays[tableIndex]) == 0 {
+			var err error
 			entryArrays[tableIndex], filesBlockOffsets[tableIndex], err = getBlockEntries(files[tableIndex], filesBlockOffsets[tableIndex], tableLimits[tableIndex])
-			if err != nil {
-				panic(err)
+			if err != nil || len(entryArrays[tableIndex]) == 0 || entryArrays[tableIndex][0] == nil {
+				continue
 			}
 		}
 
-		if len(entryArrays[tableIndex]) == 0 {
+		entry := entryArrays[tableIndex][0]
+		keyStr := string(entry.Key)
+		if keyStr == "" {
 			continue
 		}
 
-		entry := entryArrays[tableIndex][0]
-		keyStr := string(entry.key)
 		if _, exists := keyEntryMap[keyStr]; exists {
-			updateTableElement(
-				tableLimits,
-				files,
-				entryTableIndexMap,
-				keyEntryMap,
-				entryHeap,
-				entryArrays,
-				filesBlockOffsets,
-				tableIndex)
+			updateTableElement(tableLimits, files, entryTableIndexMap, keyEntryMap, entryHeap, entryArrays, filesBlockOffsets, tableIndex)
 		} else {
 			keyEntryMap[keyStr] = entry
 			entryTableIndexMap[entry] = tableIndex
-			heap.Push(entryHeap, keyStr)
+			heap.Push(entryHeap, entry)
 		}
 	}
 
-	//if there is no last entry, that means there are no valid entries at all so
-	//the file should just get deleted
 	if tracker.summaryTracker.lastEntry == nil {
 		closeTracker(tracker)
 		os.Remove(newFilePath)
 		return
 	}
+
 	flushDataBytes(tracker.dataTracker.data, tracker)
 	flushIndexBytes(tracker)
 	flushSummaryBytes(tracker)
-	getGeneration(true)
+
+	indexOffset := *tracker.indexTracker.offset
+	summaryOffset := *tracker.summaryTracker.offset
+
+	err := WriteFooter(tracker.dataTracker.file, indexOffset, summaryOffset, 0)
+	if err != nil {
+		panic(err)
+	}
+
+	if err := tracker.dataTracker.file.Sync(); err != nil {
+		panic(err)
+	}
+	if tracker.indexTracker.file != nil {
+		if err := tracker.indexTracker.file.Sync(); err != nil {
+			panic(err)
+		}
+	}
+	if tracker.summaryTracker.file != nil {
+		if err := tracker.summaryTracker.file.Sync(); err != nil {
+			panic(err)
+		}
+	}
+
 	closeTracker(tracker)
+
+	info, err := os.Stat(newFilePath)
+	if err != nil {
+		fmt.Println("File does not exist after merge:", err)
+	} else {
+		fmt.Println("File size after merge:", info.Size())
+	}
+
+	getGeneration(true)
 }
 
 // called when there is an already existing key on the heap
@@ -445,27 +507,44 @@ func updateTableElement(
 		entryToAdd := entryArrays[tableIndex][0]
 
 		//check if the key was already loaded onto heap
-		if existingEntry, exists := keyEntryMap[string(entryToAdd.key)]; exists {
+		if existingEntry, exists := keyEntryMap[string(entryToAdd.Key)]; exists {
 			//if entry is older, truncate entries
 			if entryToAdd.timeStamp < existingEntry.timeStamp {
-				entryArrays[tableIndex] = entryArrays[tableIndex][1:]
+				if len(entryArrays[tableIndex]) > 0 {
+					entryArrays[tableIndex] = entryArrays[tableIndex][1:]
+				} else {
+					// Try to read new blocks from file
+					entryArrays[tableIndex], filesBlockOffsets[tableIndex], _ = getBlockEntries(files[tableIndex], filesBlockOffsets[tableIndex], tableLimits[tableIndex])
+					if len(entryArrays[tableIndex]) == 0 {
+						return // no more data
+					}
+				}
 				continue
+			} else if entryToAdd.timeStamp == existingEntry.timeStamp {
+				if tableIndex < entryTableIndexMap[existingEntry] {
+					// prefer entry from newer file if timestamps equal
+				} else {
+					entryArrays[tableIndex] = entryArrays[tableIndex][1:]
+					continue
+				}
 			}
 
 			//if it is newer update table index for entry:index map and key:entry map
-			keyEntryMap[string(entryToAdd.key)] = entryToAdd
+			keyEntryMap[string(entryToAdd.Key)] = entryToAdd
 			entryTableIndexMap[entryToAdd] = tableIndex
 
-			//now we need load a new entry from the older sstable
+			entryArrays[tableIndex] = entryArrays[tableIndex][1:]
+
 			tableIndex = entryTableIndexMap[existingEntry]
 			delete(entryTableIndexMap, existingEntry)
 			continue
+
 		}
 
 		//add key to heap and update the entry:index map
-		keyEntryMap[string(entryToAdd.key)] = entryToAdd
+		keyEntryMap[string(entryToAdd.Key)] = entryToAdd
 		entryTableIndexMap[entryToAdd] = tableIndex
-		heap.Push(entryHeap, string(entryToAdd.key))
+		heap.Push(entryHeap, entryToAdd)
 		return
 	}
 }
@@ -544,8 +623,8 @@ func SerializeEntry(entry *Entry, bound bool) []byte {
 func serializeEntryCompressed(entry *Entry, bound bool) []byte {
 	serializedData := make([]byte, 0)
 	if bound {
-		serializedData = binary.AppendUvarint(serializedData, uint64(len(entry.key)))
-		serializedData = append(serializedData, entry.key...)
+		serializedData = binary.AppendUvarint(serializedData, uint64(len(entry.Key)))
+		serializedData = append(serializedData, entry.Key...)
 		return serializedData
 	}
 	serializedData = binary.LittleEndian.AppendUint32(serializedData, entry.crc)
@@ -555,9 +634,9 @@ func serializeEntryCompressed(entry *Entry, bound bool) []byte {
 	} else {
 		serializedData = append(serializedData, byte(0))
 	}
-	serializedData = binary.AppendUvarint(serializedData, uint64(len(entry.key)))
+	serializedData = binary.AppendUvarint(serializedData, uint64(len(entry.Key)))
 	serializedData = binary.AppendUvarint(serializedData, uint64(len(entry.value)))
-	serializedData = append(serializedData, entry.key...)
+	serializedData = append(serializedData, entry.Key...)
 	serializedData = append(serializedData, entry.value...)
 
 	return serializedData
@@ -566,8 +645,8 @@ func serializeEntryCompressed(entry *Entry, bound bool) []byte {
 func serializeEntryNonCompressed(entry *Entry, bound bool) []byte {
 	serializedData := make([]byte, 0)
 	if bound {
-		serializedData = binary.LittleEndian.AppendUint64(serializedData, uint64(len(entry.key)))
-		serializedData = append(serializedData, entry.key...)
+		serializedData = binary.LittleEndian.AppendUint64(serializedData, uint64(len(entry.Key)))
+		serializedData = append(serializedData, entry.Key...)
 		return serializedData
 	}
 	serializedData = binary.LittleEndian.AppendUint32(serializedData, entry.crc)
@@ -577,14 +656,13 @@ func serializeEntryNonCompressed(entry *Entry, bound bool) []byte {
 	} else {
 		serializedData = append(serializedData, 0)
 	}
-	serializedData = binary.LittleEndian.AppendUint64(serializedData, uint64(len(entry.key)))
+	serializedData = binary.LittleEndian.AppendUint64(serializedData, uint64(len(entry.Key)))
 	serializedData = binary.LittleEndian.AppendUint64(serializedData, uint64(len(entry.value)))
-	serializedData = append(serializedData, entry.key...)
+	serializedData = append(serializedData, entry.Key...)
 	serializedData = append(serializedData, entry.value...)
 	return serializedData
 }
 
-// Adds pointers for correct file paths to tracker
 func defineTracker(newFilePath string, tracker *Tracker) {
 	if len(newFilePath) < 11 {
 		panic("new file path is too short")
@@ -600,57 +678,76 @@ func defineTracker(newFilePath string, tracker *Tracker) {
 	}
 }
 
-func closeTracker(tracker *Tracker) {
-	tracker.indexTracker.file.Close()
-	tracker.summaryTracker.file.Close()
-	tracker.indexTracker.file.Close()
-}
+// U kompakt fajlu imamo:
+// summary = compact.bin fajl
+// data = data.bin fajl (isti prefix)
+// index = index.bin fajl (isti prefix)
+func defineTrackerCompact(newFilePath string, tracker *Tracker) {
+	dataPath := strings.Replace(newFilePath, "compact.bin", "data.bin", 1)
+	indexPath := strings.Replace(newFilePath, "compact.bin", "index.bin", 1)
+	summaryPath := newFilePath // kompaktni fajl je summary
 
-// Creates pointers for adequate files and pointers to adequate numbers
-func defineTrackerSeparate(newFilePath string, tracker *Tracker) {
-	filePrefix, found := strings.CutSuffix(newFilePath, "data.bin")
-	if !found {
-		panic("the suffix isn't data.bin")
-	}
-	newFileData, err := os.OpenFile(newFilePath, os.O_CREATE, 0664)
+	var err error
+	tracker.dataTracker.file, err = os.OpenFile(dataPath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		panic(err)
 	}
-	newFileIndex, err := os.OpenFile(filePrefix+"index.bin", os.O_CREATE, 0664)
+	tracker.indexTracker.file, err = os.OpenFile(indexPath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		panic(err)
 	}
-	newFileSummary, err := os.OpenFile(filePrefix+"summary.bin", os.O_CREATE, 0664)
+	tracker.summaryTracker.file, err = os.OpenFile(summaryPath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		panic(err)
 	}
 
-	tracker.dataTracker.file = newFileData
-	tracker.indexTracker.file = newFileIndex
-	tracker.summaryTracker.file = newFileSummary
+	tracker.summaryTracker.path = summaryPath
 
-	tracker.dataTracker.offset = new(uint64)
-	tracker.indexTracker.offset = new(uint64)
-	tracker.summaryTracker.offset = new(uint64)
 	*tracker.dataTracker.offset = 0
 	*tracker.indexTracker.offset = 0
 	*tracker.summaryTracker.offset = 0
 }
 
-// Makes all tracker file pointers point at the same file and indexes at the same number
-func defineTrackerCompact(newFilePath string, tracker *Tracker) {
-	newFile, err := os.OpenFile(newFilePath, os.O_CREATE, 0664)
+// Odvojeni fajlovi sa sufiksima: data.bin, index.bin, summary.bin
+func defineTrackerSeparate(newFilePath string, tracker *Tracker) {
+	// newFilePath je sa suffixom data.bin, npr: "usertable-3-data.bin"
+	basePath := strings.TrimSuffix(newFilePath, "data.bin")
+
+	dataPath := basePath + "data.bin"
+	indexPath := basePath + "index.bin"
+	summaryPath := basePath + "summary.bin"
+
+	var err error
+	tracker.dataTracker.file, err = os.OpenFile(dataPath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		panic(err)
 	}
-	tracker.dataTracker.file = newFile
-	tracker.indexTracker.file = newFile
-	tracker.summaryTracker.file = newFile
+	tracker.indexTracker.file, err = os.OpenFile(indexPath, os.O_RDWR|os.O_CREATE, 0644)
+	if err != nil {
+		panic(err)
+	}
+	tracker.summaryTracker.file, err = os.OpenFile(summaryPath, os.O_RDWR|os.O_CREATE, 0644)
+	if err != nil {
+		panic(err)
+	}
 
-	tracker.dataTracker.offset = new(uint64)
+	tracker.summaryTracker.path = summaryPath
+
 	*tracker.dataTracker.offset = 0
-	tracker.indexTracker.offset = tracker.dataTracker.offset
-	tracker.summaryTracker.offset = tracker.dataTracker.offset
+	*tracker.indexTracker.offset = 0
+	*tracker.summaryTracker.offset = 0
+}
+
+func closeTracker(tracker *Tracker) {
+	if tracker.dataTracker.file != nil {
+		tracker.dataTracker.file.Close()
+	}
+	if tracker.indexTracker.file != nil {
+		tracker.indexTracker.file.Close()
+	}
+	if tracker.summaryTracker.file != nil {
+		tracker.summaryTracker.file.Close()
+	}
 }
 
 func flushIndexBytes(tracker *Tracker) {
@@ -684,31 +781,6 @@ func flushIndexBytes(tracker *Tracker) {
 	}
 }
 
-func flushSummaryBytes(tracker *Tracker) {
-	array := tracker.summaryTracker.data
-	file := tracker.summaryTracker.file
-	offset := tracker.summaryTracker.offset
-	tracker.summaryTracker.offsetStart = *offset
-	for channelResult := range PrepareSSTableBlocks(file.Name(), array, false, *offset, false) {
-		block := channelResult.Block
-		blockManager.WriteBlock(file, block)
-		*offset += 1
-	}
-
-	lastEntry := tracker.summaryTracker.lastEntry
-	lastEntryData := SerializeEntry(lastEntry, true)
-
-	tracker.summaryTracker.lastElementStart = *offset
-
-	for channelResult := range PrepareSSTableBlocks(file.Name(), lastEntryData, false, *offset, true) {
-		block := channelResult.Block
-		blockManager.WriteBlock(file, block)
-		*offset += 1
-	}
-
-	flushFooter(tracker)
-}
-
 func flushFooter(tracker *Tracker) {
 	offset := tracker.summaryTracker.offset
 	footerStart := *offset
@@ -732,4 +804,47 @@ func flushFooter(tracker *Tracker) {
 
 	block := blockManager.InitBlock(tracker.summaryTracker.file.Name(), *offset, blockData)
 	blockManager.WriteBlock(tracker.summaryTracker.file, block)
+}
+
+func flushSummaryBytes(tracker *Tracker) {
+	var err error
+	if tracker.summaryTracker.file == nil {
+		summaryPath := tracker.summaryTracker.path
+		tracker.summaryTracker.file, err = os.Create(summaryPath)
+		if err != nil {
+			panic("cannot create summary file: " + err.Error())
+		}
+	}
+
+	file := tracker.summaryTracker.file
+	offset := tracker.summaryTracker.offset
+	tracker.summaryTracker.offsetStart = *offset
+
+	for channelResult := range PrepareSSTableBlocks(file.Name(), tracker.summaryTracker.data, false, *offset, false) {
+		block := channelResult.Block
+		blockManager.WriteBlock(file, block)
+		*offset += 1
+	}
+
+	lastEntry := tracker.summaryTracker.lastEntry
+	if lastEntry != nil {
+		lastEntryData := SerializeEntry(lastEntry, true)
+		tracker.summaryTracker.lastElementStart = *offset
+
+		for channelResult := range PrepareSSTableBlocks(file.Name(), lastEntryData, false, *offset, true) {
+			block := channelResult.Block
+			blockManager.WriteBlock(file, block)
+			*offset += 1
+		}
+	}
+
+	flushFooter(tracker)
+
+	if err := file.Sync(); err != nil {
+		panic("sync summary file failed: " + err.Error())
+	}
+	if err := file.Close(); err != nil {
+		panic("close summary file failed: " + err.Error())
+	}
+	tracker.summaryTracker.file = nil
 }

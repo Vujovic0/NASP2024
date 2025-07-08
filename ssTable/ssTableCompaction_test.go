@@ -12,6 +12,9 @@ func TestCompactionBasicMerge(t *testing.T) {
 	dataPath := getDataPath()
 	os.RemoveAll(dataPath)
 
+	L1Path := filepath.Join(dataPath, "L1")
+	os.MkdirAll(L1Path, 0755)
+
 	// Table 1
 	data1 := SerializeEntryHelper("a", "1", false, false)
 	data1 = append(data1, SerializeEntryHelper("b", "2", false, false)...)
@@ -24,9 +27,7 @@ func TestCompactionBasicMerge(t *testing.T) {
 	CreateCompactSSTable(data2, last2, 1, 1)
 
 	files := openAllDataFiles(t)
-	folderPath := filepath.Join(dataPath, "L1")
-	os.Mkdir(folderPath, 0755)
-	newFilePath := filepath.Join(dataPath, "L1", "usertable-3-compact.bin")
+	newFilePath := filepath.Join(L1Path, "usertable-3-compact.bin")
 	MergeTables(files, newFilePath)
 	cleanUpOldFiles(t, files)
 
@@ -56,10 +57,12 @@ func TestCompactionWithOverlappingKeys(t *testing.T) {
 	last2 := SerializeEntryHelper("c", "", false, true)
 	CreateSeparatedSSTable(data2, last2, 2, 2)
 
+	L0Path := filepath.Join(dataPath, "L0")
+	os.MkdirAll(L0Path, 0755)
 	files := openAllDataFiles(t)
 	folderPath := filepath.Join(dataPath, "L1")
 	os.Mkdir(folderPath, 0755)
-	newFilePath := filepath.Join(dataPath, "L1", "usertable-3-compact.bin")
+	newFilePath := filepath.Join(dataPath, "L1", "usertable-3-data.bin")
 	MergeTables(files, newFilePath)
 	cleanUpOldFiles(t, files)
 
@@ -83,13 +86,15 @@ func TestCompactionWithEmptyTable(t *testing.T) {
 	CreateCompactSSTable(data2, last2, 1, 1)
 
 	// Perform compaction
+	L0Path := filepath.Join(dataPath, "L0")
+	os.MkdirAll(L0Path, 0755)
 	files := openAllDataFiles(t)
 	folderPath := filepath.Join(dataPath, "L1")
 	os.Mkdir(folderPath, 0755)
 	newFilePath := filepath.Join(folderPath, "usertable-3-compact.bin")
 	MergeTables(files, newFilePath)
 
-	// ✅ Assert that new merged file does not exist (compaction result was empty)
+	// Assert that new merged file does not exist (compaction result was empty)
 	if _, err := os.Stat(newFilePath); !os.IsNotExist(err) {
 		t.Errorf("Expected no merged file to be created, but %s exists", newFilePath)
 	}
@@ -114,6 +119,8 @@ func TestCompactionMultiBlockEntries(t *testing.T) {
 	CreateSeparatedSSTable(data2, last2, 1, 1)
 
 	files := openAllDataFiles(t)
+	L0Path := filepath.Join(dataPath, "L0")
+	os.MkdirAll(L0Path, 0755)
 	folderPath := filepath.Join(dataPath, "L1")
 	os.Mkdir(folderPath, 0755)
 	newFilePath := filepath.Join(folderPath, "usertable-3-data.bin")
@@ -152,6 +159,8 @@ func TestCompactionMultiBlockKeysCompact(t *testing.T) {
 
 	// Merge tables
 	files := openAllDataFiles(t)
+	L0Path := filepath.Join(dataPath, "L0")
+	os.MkdirAll(L0Path, 0755)
 	folderPath := filepath.Join(dataPath, "L1")
 	os.Mkdir(folderPath, 0755)
 	newFilePath := filepath.Join(folderPath, "usertable-3-compact.bin")
@@ -189,6 +198,8 @@ func TestCompactionMultiBlockKeysSeparate(t *testing.T) {
 
 	// Merge tables
 	files := openAllDataFiles(t)
+	L0Path := filepath.Join(dataPath, "L0")
+	os.MkdirAll(L0Path, 0755)
 	folderPath := filepath.Join(dataPath, "L1")
 	os.Mkdir(folderPath, 0755)
 	newFilePath := filepath.Join(folderPath, "usertable-3-data.bin")
@@ -226,6 +237,8 @@ func TestCompactionLargeKeyLargeValueSeparate(t *testing.T) {
 
 	// Merge tables
 	files := openAllDataFiles(t)
+	L0Path := filepath.Join(dataPath, "L0")
+	os.MkdirAll(L0Path, 0755)
 	folderPath := filepath.Join(dataPath, "L1")
 	os.Mkdir(folderPath, 0755)
 	newFilePath := filepath.Join(folderPath, "usertable-3-data.bin")
@@ -263,6 +276,8 @@ func TestCompactionLargeKeyLargeValueCompact(t *testing.T) {
 
 	// Merge tables
 	files := openAllDataFiles(t)
+	L0Path := filepath.Join(dataPath, "L0")
+	os.MkdirAll(L0Path, 0755)
 	folderPath := filepath.Join(dataPath, "L1")
 	os.Mkdir(folderPath, 0755)
 	newFilePath := filepath.Join(folderPath, "usertable-3-compact.bin")
@@ -307,6 +322,8 @@ func TestCompactionMixedSizesCompact(t *testing.T) {
 
 	// --- Perform compaction ---
 	files := openAllDataFiles(t)
+	L0Path := filepath.Join(dataPath, "L0")
+	os.MkdirAll(L0Path, 0755)
 	folderPath := filepath.Join(dataPath, "L1")
 	os.Mkdir(folderPath, 0755)
 	newFilePath := filepath.Join(folderPath, "usertable-3-compact.bin")
@@ -357,6 +374,8 @@ func TestCompactionMixedSizesSeparate(t *testing.T) {
 
 	// --- Perform compaction ---
 	files := openAllDataFiles(t)
+	L0Path := filepath.Join(dataPath, "L0")
+	os.MkdirAll(L0Path, 0755)
 	folderPath := filepath.Join(dataPath, "L1")
 	os.Mkdir(folderPath, 0755)
 	newFilePath := filepath.Join(folderPath, "usertable-3-data.bin")
@@ -412,9 +431,11 @@ func TestCompactionWithManyOverlappingKeys(t *testing.T) {
 	time.Sleep(1 * time.Second)
 
 	files := openAllDataFiles(t)
+	L0Path := filepath.Join(dataPath, "L0")
+	os.MkdirAll(L0Path, 0755)
 	folderPath := filepath.Join(dataPath, "L1")
 	os.Mkdir(folderPath, 0755)
-	newFilePath := filepath.Join(dataPath, "L1", "usertable-3-compact.bin")
+	newFilePath := filepath.Join(dataPath, "usertable-3-data.bin")
 	MergeTables(files, newFilePath)
 	cleanUpOldFiles(t, files)
 
@@ -455,9 +476,11 @@ func TestCompactionNewerKeysOverrideOlder(t *testing.T) {
 	CreateSeparatedSSTable(data2, last2, 2, 2)
 
 	files := openAllDataFiles(t)
+	L0Path := filepath.Join(dataPath, "L0")
+	os.MkdirAll(L0Path, 0755)
 	folderPath := filepath.Join(dataPath, "L1")
 	os.Mkdir(folderPath, 0755)
-	newFilePath := filepath.Join(dataPath, "L1", "usertable-3-compact.bin")
+	newFilePath := filepath.Join(dataPath, "usertable-3-data.bin")
 	MergeTables(files, newFilePath)
 
 	time.Sleep(1 * time.Second)

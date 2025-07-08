@@ -3,35 +3,197 @@ package ssTable
 import (
 	"bytes"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
+	"github.com/Vujovic0/NASP2024/blockManager"
 	"github.com/Vujovic0/NASP2024/config"
 )
 
+func WriteFooter(file *os.File, indexOffset, summaryOffset, boundOffset uint64) error {
+	var buf bytes.Buffer
+	err := binary.Write(&buf, binary.LittleEndian, indexOffset)
+	if err != nil {
+		return err
+	}
+	err = binary.Write(&buf, binary.LittleEndian, summaryOffset)
+	if err != nil {
+		return err
+	}
+	err = binary.Write(&buf, binary.LittleEndian, boundOffset)
+	if err != nil {
+		return err
+	}
+
+	_, err = file.Write(buf.Bytes())
+	return err
+}
+
+// WriteIndexBlock writes the index block mapping keys to data block offsets
+func WriteIndexBlock(file *os.File, elements []Element, currentOffset uint64) (uint64, error) {
+	offset := currentOffset
+
+	var buf bytes.Buffer
+	for _, el := range elements {
+		if err := binary.Write(&buf, binary.LittleEndian, uint32(len(el.Key))); err != nil {
+			return 0, err
+		}
+		if _, err := buf.Write([]byte(el.Key)); err != nil {
+			return 0, err
+		}
+		// dummy offset, možeš kasnije proširiti
+		if err := binary.Write(&buf, binary.LittleEndian, uint64(0)); err != nil {
+			return 0, err
+		}
+	}
+
+	block := blockManager.NewBlock(0)
+	block.Add(buf.Bytes())
+	block.Offset = offset
+
+	err := blockManager.WriteBlock(file, block)
+	if err != nil {
+		return 0, err
+	}
+
+	return offset + uint64(len(block.GetData())), nil
+}
+
+// WriteSummaryBlock writes a summary block (e.g. sampled keys for faster lookup)
+func WriteSummaryBlock(file *os.File, elements []Element, currentOffset uint64) (uint64, error) {
+	offset := currentOffset
+
+	var buf bytes.Buffer
+	step := 10
+	for i := 0; i < len(elements); i += step {
+		el := elements[i]
+		if err := binary.Write(&buf, binary.LittleEndian, uint32(len(el.Key))); err != nil {
+			return 0, err
+		}
+		if _, err := buf.Write([]byte(el.Key)); err != nil {
+			return 0, err
+		}
+	}
+
+	block := blockManager.NewBlock(0)
+	block.Add(buf.Bytes())
+	block.Offset = offset
+
+	err := blockManager.WriteBlock(file, block)
+	if err != nil {
+		return 0, err
+	}
+
+	return offset + uint64(len(block.GetData())), nil
+}
+
+// WriteBoundBlock writes the maximum key in the SSTable (bound block)
+func WriteBoundBlock(file *os.File, elements []Element, currentOffset uint64) (uint64, error) {
+	offset := currentOffset
+
+	maxKey := elements[len(elements)-1].Key
+
+	var buf bytes.Buffer
+	if err := binary.Write(&buf, binary.LittleEndian, uint32(len(maxKey))); err != nil {
+		return 0, err
+	}
+	if _, err := buf.Write([]byte(maxKey)); err != nil {
+		return 0, err
+	}
+
+	block := blockManager.NewBlock(0)
+	block.Add(buf.Bytes())
+	block.Offset = offset
+
+	err := blockManager.WriteBlock(file, block)
+	if err != nil {
+		return 0, err
+	}
+
+	return offset + uint64(len(block.GetData())), nil
+}
+
 func Flush(elements []Element, sstFilename string) error {
+	// Sortiraj elemente po ključu ([]byte, ne string)
+	sort.Slice(elements, func(i, j int) bool {
+		return bytes.Compare([]byte(elements[i].Key), []byte(elements[j].Key)) < 0
+	})
+
+	file, err := os.Create(sstFilename)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	var blocks []*blockManager.Block
+	currentOffset := uint64(0)
+
+	// Piši svaki element kao poseban blok i postavi offset
+	for _, el := range elements {
+		var buf bytes.Buffer
+
+		if err := binary.Write(&buf, binary.LittleEndian, uint32(len(el.Key))); err != nil {
+			return err
+		}
+		if _, err := buf.Write([]byte(el.Key)); err != nil {
+			return err
+		}
+
+		if err := binary.Write(&buf, binary.LittleEndian, uint32(len(el.Value))); err != nil {
+			return err
+		}
+		if _, err := buf.Write(el.Value); err != nil {
+			return err
+		}
+
+		block := blockManager.NewBlock(0)
+		block.Add(buf.Bytes())
+		block.Offset = currentOffset
+
+		err := blockManager.WriteBlock(file, block)
+		if err != nil {
+			return err
+		}
+
+		blocks = append(blocks, block)
+		currentOffset += uint64(len(block.GetData()))
+	}
+
+	// Piši index block
+	indexOffset, err := WriteIndexBlock(file, elements, currentOffset)
+	if err != nil {
+		return err
+	}
+	currentOffset = indexOffset
+
+	// Piši summary block
+	summaryOffset, err := WriteSummaryBlock(file, elements, currentOffset)
+	if err != nil {
+		return err
+	}
+	currentOffset = summaryOffset
+
+	// Piši bound block
+	boundOffset, err := WriteBoundBlock(file, elements, currentOffset)
+	if err != nil {
+		return err
+	}
+	currentOffset = boundOffset
+
+	// Piši footer
+	err = WriteFooter(file, indexOffset, summaryOffset, boundOffset)
+	if err != nil {
+		return err
+	}
+
+	// Opcionalno: kompresuj i sačuvaj dictionary
 	var values []string
 	for _, el := range elements {
-		values = append(values, el.Value)
+		values = append(values, string(el.Value))
 	}
-
-	compressedData, dict := CompressWithDictionary(values)
-	split := bytes.Split(compressedData, []byte("|"))
-	if len(split) != len(elements) {
-		return errors.New("compression mismatch with element count")
-	}
-	for i := range elements {
-		elements[i].Value = string(split[i])
-	}
-
-	var ptrElements []*Element
-	for i := range elements {
-		ptrElements = append(ptrElements, &elements[i])
-	}
-	WriteMergedSSTable(ptrElements)
-
+	_, dict := CompressWithDictionary(values)
 	dictFile := strings.Replace(sstFilename, ".sst", ".dict", 1)
 	return SaveDictionaryToFile(dict, dictFile)
 }
@@ -39,14 +201,14 @@ func Flush(elements []Element, sstFilename string) error {
 func WriteMergedSSTable(entries []*Element) {
 	var values []string
 	for _, e := range entries {
-		values = append(values, e.Value)
+		values = append(values, string(e.Value))
 	}
 
 	compressedData, dict := CompressWithDictionary(values)
 	split := bytes.Split(compressedData, []byte("|"))
 	for i, e := range entries {
 		if i < len(split) {
-			e.Value = string(split[i])
+			e.Value = split[i]
 		}
 	}
 

@@ -2,6 +2,7 @@ package ssTable
 
 import (
 	"cmp"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -145,6 +146,11 @@ func GetReadOrder(dataPath string) []string {
 		tableNames = sortTableNames(tableNames)
 		tablePaths := getTablePaths(levelPath, tableNames)
 		orderedPaths = append(orderedPaths, tablePaths...)
+	}
+
+	fmt.Println("SearchAll read order:")
+	for _, path := range orderedPaths {
+		fmt.Printf("  - %s\n", path)
 	}
 
 	return orderedPaths
