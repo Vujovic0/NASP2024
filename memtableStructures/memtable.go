@@ -1,4 +1,4 @@
-package memtableStructures
+package main
 
 import (
 	"bytes"
@@ -34,8 +34,26 @@ type Element struct {
 	Tombstone bool
 }
 
+func loadConfig() Config {
+	// Postavi default vrednosti
+	config := Config{
+		WalSize:           10,
+		MemtableSize:      10,
+		MemtableStructure: "hashMap",
+	}
+
+	// Pokusavamo da ucitamo konfiguraciju iz fajla
+	configData, err := os.ReadFile("config.json")
+	if err == nil {
+		json.Unmarshal(configData, &config)
+		// Ako neko polje nedostaje u fajlu, ostaje default iz koda!
+	}
+	return config
+}
+
 func initializeMemoryTable() *MemoryTable {
-	var config Config
+	config := loadConfig()
+	// var config Config
 	configData, err := os.ReadFile("config.json")
 	if err != nil {
 		log.Fatal(err)
@@ -329,32 +347,36 @@ func readNextElement(buffer *bytes.Reader, originalData []byte) []byte {
 	elementBuffer := new(bytes.Buffer)
 	tmp := make([]byte, binary.MaxVarintLen64)
 
-	// 1. Duzina kljuca
-	keyLen, _ := binary.ReadUvarint(buffer)
-	n := binary.PutUvarint(tmp, keyLen)
-	elementBuffer.Write(tmp[:n])
-
-	// 2. Kljuc
-	key := make([]byte, keyLen)
-	buffer.Read(key)
-	elementBuffer.Write(key)
-
-	// 3. Timestamp
+	// 1. Timestamp
 	timestamp, _ := binary.ReadVarint(buffer)
-	n = binary.PutVarint(tmp, timestamp)
+	n := binary.PutVarint(tmp, timestamp)
 	elementBuffer.Write(tmp[:n])
 
-	// 4. Tombstone (1 bajt)
+	// 2. Tombstone (1 bajt)
 	tombstoneByte, _ := buffer.ReadByte()
 	elementBuffer.WriteByte(tombstoneByte)
 	tombstone := tombstoneByte != 0
 
-	// 5. Ako element nije obrisan, upisujemo duzinu vrednosti i vrednost
+	// 3. Duzina kljuca
+	keyLen, _ := binary.ReadUvarint(buffer)
+	n = binary.PutUvarint(tmp, keyLen)
+	elementBuffer.Write(tmp[:n])
+
+	// 4. Valuesize (samo ako nije tombstone)
+	var valueLen uint64
 	if !tombstone {
-		valueLen, _ := binary.ReadUvarint(buffer)
+		valueLen, _ = binary.ReadUvarint(buffer)
 		n = binary.PutUvarint(tmp, valueLen)
 		elementBuffer.Write(tmp[:n])
+	}
 
+	// 5. Kljuc
+	key := make([]byte, keyLen)
+	buffer.Read(key)
+	elementBuffer.Write(key)
+
+	// 6. Vrednost (samo ako nije tombstone)
+	if !tombstone {
 		value := make([]byte, valueLen)
 		buffer.Read(value)
 		elementBuffer.Write(value)
@@ -367,20 +389,7 @@ func elementToBytes(element *Element) []byte {
 	var buffer bytes.Buffer
 	tmp := make([]byte, binary.MaxVarintLen64)
 
-	// 1. Duzina kljuca
-	if config.VariableEncoding {
-		n := binary.PutUvarint(tmp, uint64(len(element.Key)))
-		buffer.Write(tmp[:n])
-	} else {
-		keyLen := make([]byte, 8)
-		binary.LittleEndian.PutUint64(keyLen, uint64(len(element.Key)))
-		buffer.Write(keyLen)
-	}
-
-	// 2. Kljuc
-	buffer.WriteString(element.Key)
-
-	// 3. Timestamp
+	// 1. Timestamp
 	if config.VariableEncoding {
 		n := binary.PutVarint(tmp, element.Timestamp)
 		buffer.Write(tmp[:n])
@@ -390,14 +399,24 @@ func elementToBytes(element *Element) []byte {
 		buffer.Write(timestampBytes)
 	}
 
-	// 4. Tombstone
+	// 2. Tombstone
 	if element.Tombstone {
 		buffer.WriteByte(1)
 	} else {
 		buffer.WriteByte(0)
 	}
 
-	// 5. Ako element nije obrisan, upisujemo duzinu vrednosti i vrednost
+	// 3. Duzina kljuca
+	if config.VariableEncoding {
+		n := binary.PutUvarint(tmp, uint64(len(element.Key)))
+		buffer.Write(tmp[:n])
+	} else {
+		keyLen := make([]byte, 8)
+		binary.LittleEndian.PutUint64(keyLen, uint64(len(element.Key)))
+		buffer.Write(keyLen)
+	}
+
+	// 4. Ako element nije tombstone, upisujemo duzinu vrednosti
 	if !element.Tombstone {
 		if config.VariableEncoding {
 			n := binary.PutUvarint(tmp, uint64(len(element.Value)))
@@ -407,29 +426,23 @@ func elementToBytes(element *Element) []byte {
 			binary.LittleEndian.PutUint64(valueLen, uint64(len(element.Value)))
 			buffer.Write(valueLen)
 		}
+	}
+
+	// 5. Kljuc
+	buffer.WriteString(element.Key)
+
+	// 6. Value (samo ako nije tombstone)
+	if !element.Tombstone {
 		buffer.Write(element.Value)
 	}
+
 	return buffer.Bytes()
 }
 
 func bytesToElement(data []byte) *Element {
 	buffer := bytes.NewReader(data)
 
-	// 1. Duzina kljuca
-	var keyLen uint64
-	if config.VariableEncoding {
-		keyLen, _ = binary.ReadUvarint(buffer)
-	} else {
-		keyLenBytes := make([]byte, 8)
-		buffer.Read(keyLenBytes)
-		keyLen = binary.LittleEndian.Uint64(keyLenBytes)
-	}
-
-	// 2. Kljuc
-	key := make([]byte, keyLen)
-	buffer.Read(key)
-
-	// 3. Timestamp
+	// 1. Timestamp
 	var timestamp int64
 	if config.VariableEncoding {
 		timestamp, _ = binary.ReadVarint(buffer)
@@ -439,14 +452,23 @@ func bytesToElement(data []byte) *Element {
 		timestamp = int64(binary.LittleEndian.Uint64(timestampBytes))
 	}
 
-	// 4. Tombstone (1 bajt)
+	// 2. Tombstone (1 bajt)
 	tombstoneByte, _ := buffer.ReadByte()
 	tombstone := tombstoneByte != 0
 
-	// 5. Ako nije tombstone, duzina vrednosti i vrednost
-	var value []byte
+	// 3. Duzina kljuca
+	var keyLen uint64
+	if config.VariableEncoding {
+		keyLen, _ = binary.ReadUvarint(buffer)
+	} else {
+		keyLenBytes := make([]byte, 8)
+		buffer.Read(keyLenBytes)
+		keyLen = binary.LittleEndian.Uint64(keyLenBytes)
+	}
+
+	// 4. Valuesize (samo ako nije tombstone)
+	var valueLen uint64
 	if !tombstone {
-		var valueLen uint64
 		if config.VariableEncoding {
 			valueLen, _ = binary.ReadUvarint(buffer)
 		} else {
@@ -454,9 +476,17 @@ func bytesToElement(data []byte) *Element {
 			buffer.Read(valueLenBytes)
 			valueLen = binary.LittleEndian.Uint64(valueLenBytes)
 		}
-		valueBytes := make([]byte, valueLen)
-		buffer.Read(valueBytes)
-		value = valueBytes
+	}
+
+	// 5. Kljuc
+	key := make([]byte, keyLen)
+	buffer.Read(key)
+
+	// 6. Vrednost (samo ako nije tombstone)
+	var value []byte
+	if !tombstone {
+		value = make([]byte, valueLen)
+		buffer.Read(value)
 	}
 
 	return &Element{
