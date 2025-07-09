@@ -234,7 +234,7 @@ func CreateCompactSSTable(data []byte, lastElementData []byte, summary_sparsity 
 		}
 	}
 
-	generation := getGeneration(true)
+	generation := GetGeneration(true)
 
 	fileName := dataPath + string(os.PathSeparator) + "L0" + string(os.PathSeparator) + "usertable-" + strconv.FormatUint(uint64(generation), 10) + "-compact.bin"
 	file, err := os.OpenFile(fileName, os.O_CREATE, 0664)
@@ -350,7 +350,7 @@ func CreateSeparatedSSTable(data []byte, lastElementData []byte, summary_sparsit
 		}
 	}
 
-	generation := getGeneration(true)
+	generation := GetGeneration(true)
 
 	fileName := dataPath + string(os.PathSeparator) + "L0" + string(os.PathSeparator) + "usertable-" + strconv.FormatUint(uint64(generation), 10)
 	FILEDATAPATH := fileName + "-data.bin"

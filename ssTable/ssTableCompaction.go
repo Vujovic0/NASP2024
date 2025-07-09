@@ -421,7 +421,7 @@ func MergeTables(filesArg []*os.File, newFilePath string) {
 	flushDataBytes(tracker.dataTracker.data, tracker)
 	flushIndexBytes(tracker)
 	flushSummaryBytes(tracker)
-	getGeneration(true)
+	GetGeneration(true)
 	closeTracker(tracker)
 }
 
