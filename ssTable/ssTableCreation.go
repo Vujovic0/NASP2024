@@ -243,86 +243,83 @@ func CreateCompactSSTable(data []byte, lastElementData []byte, summary_sparsity 
 	var summaryData []byte
 
 	var keyBinary []byte
-
 	var counter int = 0
 	var blockCounter uint64 = 0
 	var summaryStart uint64 = 0
 	var indexStart uint64 = 0
 	var footerStart uint64 = 0
 
-	// Creates the data segment while preparing data for the index segment
+	// DATA segment + INDEX preparation
 	for channelResult := range PrepareSSTableBlocks(fileName, data, true, 0, false) {
 		blockManager.WriteBlock(file, channelResult.Block)
-		blockCounter += 1
+		blockCounter++
 		if !bytes.Equal(keyBinary, channelResult.Key) {
 			keyBinary = channelResult.Key
 			if counter%index_sparsity == 0 {
 				if !config.VariableEncoding {
 					indexData = binary.LittleEndian.AppendUint64(indexData, uint64(len(keyBinary)))
 					indexData = append(indexData, keyBinary...)
-					indexData = binary.LittleEndian.AppendUint64(indexData, uint64(channelResult.Block.GetOffset()))
+					indexData = binary.LittleEndian.AppendUint64(indexData, channelResult.Block.GetOffset())
 				} else {
 					indexData = binary.AppendUvarint(indexData, uint64(len(keyBinary)))
 					indexData = append(indexData, keyBinary...)
-					indexData = binary.AppendUvarint(indexData, uint64(channelResult.Block.GetOffset()))
+					indexData = binary.AppendUvarint(indexData, channelResult.Block.GetOffset())
 				}
 			}
+			counter++
 		}
-		counter += 1
 	}
 
 	keyBinary = nil
 	indexStart = blockCounter
 	counter = 0
 
-	// Creates the index segment while preparing data for the summary segment
+	// INDEX segment + SUMMARY preparation
 	for channelResult := range PrepareSSTableBlocks(fileName, indexData, false, blockCounter, false) {
 		blockManager.WriteBlock(file, channelResult.Block)
-		blockCounter += 1
+		blockCounter++
 		if !bytes.Equal(keyBinary, channelResult.Key) {
 			keyBinary = channelResult.Key
 			if counter%summary_sparsity == 0 {
 				if !config.VariableEncoding {
 					summaryData = binary.LittleEndian.AppendUint64(summaryData, uint64(len(keyBinary)))
 					summaryData = append(summaryData, keyBinary...)
-					summaryData = binary.LittleEndian.AppendUint64(summaryData, uint64(channelResult.Block.GetOffset()))
+					summaryData = binary.LittleEndian.AppendUint64(summaryData, channelResult.Block.GetOffset())
 				} else {
 					summaryData = binary.AppendUvarint(summaryData, uint64(len(keyBinary)))
 					summaryData = append(summaryData, keyBinary...)
-					summaryData = binary.AppendUvarint(summaryData, uint64(channelResult.Block.GetOffset()))
+					summaryData = binary.AppendUvarint(summaryData, channelResult.Block.GetOffset())
 				}
 			}
+			counter++
 		}
-		counter += 1
 	}
 
 	summaryStart = blockCounter
 
-	// Creates summary segment
+	// SUMMARY segment
 	for channelResult := range PrepareSSTableBlocks(fileName, summaryData, false, blockCounter, false) {
 		blockManager.WriteBlock(file, channelResult.Block)
-		blockCounter += 1
+		blockCounter++
 	}
 
 	boundStart := blockCounter
 
-	// Writes last element data segment
+	// LAST ENTRY segment
 	for channelResult := range PrepareSSTableBlocks(fileName, lastElementData, false, blockCounter, true) {
 		blockManager.WriteBlock(file, channelResult.Block)
-		blockCounter += 1
+		blockCounter++
 	}
 
 	footerStart = blockCounter
 
-	// Prepare footer data in order: indexStart, summaryStart, boundStart, footerStart
-	footerData := make([]byte, 0)
-
+	// Footer: upisuj u REDOSLEDU KOJI `ReadFooter()` očekuje
+	var footerData []byte
+	footerData = binary.LittleEndian.AppendUint64(footerData, footerStart)
 	footerData = binary.LittleEndian.AppendUint64(footerData, indexStart)
 	footerData = binary.LittleEndian.AppendUint64(footerData, summaryStart)
 	footerData = binary.LittleEndian.AppendUint64(footerData, boundStart)
-	footerData = binary.LittleEndian.AppendUint64(footerData, footerStart)
 
-	// Create footer block with 8 bytes header (4 bytes crc32 + 4 bytes length)
 	blockData := make([]byte, 8+len(footerData))
 	copy(blockData[8:], footerData)
 
@@ -333,16 +330,12 @@ func CreateCompactSSTable(data []byte, lastElementData []byte, summary_sparsity 
 	block := blockManager.InitBlock(fileName, blockCounter, blockData)
 	blockManager.WriteBlock(file, block)
 
-	// Make sure all data is flushed to disk
 	if err := file.Sync(); err != nil {
 		panic(err)
 	}
 
-	// Debug info
 	info, err := os.Stat(fileName)
-	if err != nil {
-		fmt.Println("Error stating file:", err)
-	} else {
+	if err == nil {
 		fmt.Println("Compact SSTable file size:", info.Size())
 	}
 }

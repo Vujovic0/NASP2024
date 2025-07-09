@@ -229,7 +229,11 @@ func WriteMergedSSTable(entries []*Element) {
 	}
 	lastBuf = append(lastBuf, lastKeyBytes...)
 
-	CreateCompactSSTable(data, lastBuf, 2, 4)
+	if config.UseCompactMode {
+		CreateCompactSSTable(data, lastBuf, 2, 4)
+	} else {
+		CreateSeparatedSSTable(data, lastBuf, 2, 4)
+	}
 
 	err := SaveDictionaryToFile(dict, "data/dictionary.dict")
 	if err != nil {

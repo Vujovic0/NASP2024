@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"os"
+	"path/filepath"
 	"strconv"
 
 	"github.com/Vujovic0/NASP2024/blockManager"
@@ -19,28 +20,58 @@ func Find(key []byte) []byte {
 	if err != nil {
 		panic(err)
 	}
+
 	files := make(map[string]string)
 	for _, level := range levels {
 		if level.Name() == "metaData.bin" {
 			continue
 		}
-		filesToAppend, err := os.ReadDir("data" + string(os.PathSeparator) + level.Name())
+		levelPath := filepath.Join("data", level.Name())
+		levelFiles, err := os.ReadDir(levelPath)
 		if err != nil {
 			panic(err)
 		}
-		for _, file := range filesToAppend {
-			files[file.Name()] = "data" + string(os.PathSeparator) + level.Name() + string(os.PathSeparator) + file.Name()
+		for _, f := range levelFiles {
+			files[f.Name()] = filepath.Join(levelPath, f.Name())
 		}
 	}
 
-	var offset uint64
-	var valueBytes []byte
+	for i := 1; i <= int(generation); i++ {
+		genStr := strconv.Itoa(i)
+		base := "usertable-" + genStr
 
-	for iterator := 1; iterator <= int(generation); iterator++ {
-		genStr := strconv.FormatUint(uint64(iterator), 10)
-		fileName := "usertable-" + genStr + "-compact.bin"
-		if _, ok := files[fileName]; ok {
-			valueBytes, err = findSeparated(files[fileName], key, 0)
+		// First check separated format (preferred)
+		summaryFile := base + "-summary.bin"
+		if summaryPath, ok := files[summaryFile]; ok {
+			valueBytes, err := findSeparated(summaryPath, key, 0)
+			if err != nil {
+				panic(err)
+			}
+			if valueBytes == nil {
+				continue
+			}
+
+			// Find index
+			indexPath := files[base+"-index.bin"]
+			var offset uint64
+			if !config.VariableEncoding {
+				offset = binary.LittleEndian.Uint64(valueBytes)
+			} else {
+				offset, _ = binary.Uvarint(valueBytes)
+			}
+			valueBytes, err = findSeparated(indexPath, key, offset)
+			if err != nil {
+				panic(err)
+			}
+
+			// Find data
+			dataPath := files[base+"-data.bin"]
+			if !config.VariableEncoding {
+				offset = binary.LittleEndian.Uint64(valueBytes)
+			} else {
+				offset, _ = binary.Uvarint(valueBytes)
+			}
+			valueBytes, err = findSeparated(dataPath, key, offset)
 			if err != nil {
 				panic(err)
 			}
@@ -50,33 +81,10 @@ func Find(key []byte) []byte {
 			continue
 		}
 
-		fileName = "usertable-" + genStr + "-summary.bin"
-		if path, ok := files[fileName]; ok {
-			valueBytes, err = findSeparated(path, key, 0)
-			if err != nil {
-				panic(err)
-			}
-			if valueBytes == nil {
-				continue
-			}
-			fileName = "usertable-" + genStr + "-index.bin"
-			if !config.VariableEncoding {
-				offset = binary.LittleEndian.Uint64(valueBytes)
-			} else {
-				offset, _ = binary.Uvarint(valueBytes)
-			}
-			valueBytes, err = findSeparated(files[fileName], key, offset)
-			if err != nil {
-				panic(err)
-			}
-
-			fileName = "usertable-" + genStr + "-data.bin"
-			if !config.VariableEncoding {
-				offset = binary.LittleEndian.Uint64(valueBytes)
-			} else {
-				offset, _ = binary.Uvarint(valueBytes)
-			}
-			valueBytes, err = findSeparated(files[fileName], key, offset)
+		// If not found, try compact version
+		compactFile := base + "-compact.bin"
+		if path, ok := files[compactFile]; ok {
+			valueBytes, err := findSeparated(path, key, 0)
 			if err != nil {
 				panic(err)
 			}

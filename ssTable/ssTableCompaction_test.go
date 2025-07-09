@@ -1,19 +1,20 @@
 package ssTable
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Vujovic0/NASP2024/config"
 )
 
 func TestCompactionBasicMerge(t *testing.T) {
+	config.UseCompactMode = true
 	dataPath := getDataPath()
 	os.RemoveAll(dataPath)
-
-	L1Path := filepath.Join(dataPath, "L1")
-	os.MkdirAll(L1Path, 0755)
 
 	// Table 1
 	data1 := SerializeEntryHelper("a", "1", false, false)
@@ -26,19 +27,56 @@ func TestCompactionBasicMerge(t *testing.T) {
 	last2 := SerializeEntryHelper("c", "", false, true)
 	CreateCompactSSTable(data2, last2, 1, 1)
 
+	// Prepare L1 and run compaction
+	L0Path := filepath.Join(dataPath, "L0")
+	os.MkdirAll(L0Path, 0755)
 	files := openAllDataFiles(t)
-	newFilePath := filepath.Join(L1Path, "usertable-3-compact.bin")
+	folderPath := filepath.Join(dataPath, "L1")
+	os.Mkdir(folderPath, 0755)
+
+	// Compact output path (summary is inside this file)
+	newFilePath := filepath.Join(folderPath, "usertable-3-compact.bin")
 	MergeTables(files, newFilePath)
+
+	var expectedFiles []string
+	if config.UseCompactMode {
+		expectedFiles = []string{
+			"usertable-3-compact.bin",
+			"usertable-3-data.bin",
+			"usertable-3-index.bin",
+		}
+	} else {
+		expectedFiles = []string{
+			"usertable-3-summary.bin",
+			"usertable-3-data.bin",
+			"usertable-3-index.bin",
+		}
+	}
+	for _, fname := range expectedFiles {
+		path := filepath.Join("data", "L1", fname)
+		if _, err := os.Stat(path); err != nil {
+			fmt.Printf("MISSING: %s\n", path)
+		} else {
+			fmt.Printf("OK: %s\n", path)
+		}
+	}
+
 	cleanUpOldFiles(t, files)
 
-	result := SearchAll([]byte("a"), false)
-	checkEqual(t, string(result), "1", "Incorrect value after compaction")
+	if _, err := os.Stat(newFilePath); os.IsNotExist(err) {
+		t.Errorf("Expected compact SSTable file not found after compaction: %s", newFilePath)
+	}
 
-	result = SearchAll([]byte("b"), false)
-	checkEqual(t, string(result), "2", "Incorrect value after compaction")
-
-	result = SearchAll([]byte("c"), false)
-	checkEqual(t, string(result), "3", "Incorrect value after compaction")
+	keys := map[string]string{
+		"a": "1",
+		"b": "2",
+		"c": "3",
+	}
+	for k, expected := range keys {
+		fmt.Println("SearchAll read order:")
+		result := SearchAll([]byte(k), false)
+		checkEqual(t, string(result), expected, fmt.Sprintf("Incorrect value after compaction for key %s", k))
+	}
 }
 
 func TestCompactionWithOverlappingKeys(t *testing.T) {

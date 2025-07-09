@@ -115,15 +115,10 @@ func checkLimit(offset uint64, limit uint64) (error, bool) {
 }
 
 // Takes filepath, block offset to read from and the last block offset of data segment
-//
 // Returns array of entry pointers, new block offset.
 // Returns error if block type is other than 0 or 1.
 func getBlockEntries(file *os.File, offset uint64, limit uint64) ([]*Entry, uint64, error) {
-	// Proveri da li je offset van limita
-	err, endCheck := checkLimit(offset, limit)
-	if err != nil {
-		return nil, offset, err
-	} else if endCheck {
+	if offset >= limit {
 		return nil, offset, nil
 	}
 
@@ -135,6 +130,7 @@ func getBlockEntries(file *os.File, offset uint64, limit uint64) ([]*Entry, uint
 	}
 
 	blockType := block.GetType()
+	var err error
 	switch blockType {
 	case 0:
 		entryArray, err = getBlockEntriesTypeFull(block)
@@ -145,19 +141,21 @@ func getBlockEntries(file *os.File, offset uint64, limit uint64) ([]*Entry, uint
 		return nil, offset, fmt.Errorf("unknown block type %d", blockType)
 	}
 
-	// Validacija: nema ni jednog validnog entry-ja
+	if err != nil {
+		return nil, offset, err
+	}
+
 	if len(entryArray) == 0 {
 		return nil, offset, nil
 	}
 
-	// Provera da entry-ji nisu nil i imaju ključ
 	for _, e := range entryArray {
 		if e == nil || len(e.Key) == 0 {
 			return nil, offset, fmt.Errorf("invalid entry in block at offset %d", offset)
 		}
 	}
 
-	return entryArray, offset, err
+	return entryArray, offset, nil
 }
 
 // | CRC 4B | TimeStamp 8B | Tombstone 1B | Keysize 8B | Valuesize 8B | Key... | Value... |
@@ -361,22 +359,12 @@ func MergeTables(filesArg []*os.File, newFilePath string) {
 	filesBlockOffsets := make([]uint64, len(files))
 
 	tracker := initTracker()
+	defineTracker(newFilePath, tracker)
 
 	entryTableIndexMap := make(map[*Entry]int)
 	keyEntryMap := make(map[string]*Entry)
 	entryHeap := &EntryHeap{}
 	heap.Init(entryHeap)
-
-	// VAŽNO: defineTracker očekuje putanju do data fajla (ako koristiš odvojene fajlove)
-	// Zato treba poslati putanju bez suffixa 'compact.bin'
-	// Pretpostavimo da želimo da generišemo odvojene fajlove:
-
-	// Ako je newFilePath sa suffixom "-compact.bin", izmeni ga u suffix "-data.bin"
-	if strings.HasSuffix(newFilePath, "compact.bin") {
-		newFilePath = strings.TrimSuffix(newFilePath, "compact.bin") + "data.bin"
-	}
-
-	defineTracker(newFilePath, tracker)
 
 	for i := 0; i < len(files); i++ {
 		var err error
@@ -384,42 +372,29 @@ func MergeTables(filesArg []*os.File, newFilePath string) {
 		if err != nil || len(entryArrays[i]) == 0 || entryArrays[i][0] == nil {
 			continue
 		}
-
 		entry := entryArrays[i][0]
 		keyStr := string(entry.Key)
 		if keyStr == "" {
 			continue
 		}
-
-		if _, exists := keyEntryMap[keyStr]; exists {
-			updateTableElement(tableLimits, files, entryTableIndexMap, keyEntryMap, entryHeap, entryArrays, filesBlockOffsets, i)
-		} else {
-			keyEntryMap[keyStr] = entry
-			entryTableIndexMap[entry] = i
-			heap.Push(entryHeap, entry)
-		}
+		keyEntryMap[keyStr] = entry
+		entryTableIndexMap[entry] = i
+		heap.Push(entryHeap, entry)
 	}
 
 	for entryHeap.Len() > 0 {
 		minEntry := heap.Pop(entryHeap).(*Entry)
-		minKey := string(minEntry.Key)
 		tableIndex := entryTableIndexMap[minEntry]
+		delete(entryTableIndexMap, minEntry)
+		delete(keyEntryMap, string(minEntry.Key))
 
 		if !minEntry.tombstone {
-			serializedEntry := SerializeEntry(minEntry, false)
+			serialized := SerializeEntry(minEntry, false)
 			tracker.summaryTracker.lastEntry = minEntry
-			fmt.Printf("Flushing entry: key=%s, value=%s\n", minEntry.Key, minEntry.value)
-			fmt.Printf("Tracker data file is nil? %v\n", tracker.dataTracker.file == nil)
-			fmt.Printf("Tracker data buffer is nil? %v\n", tracker.dataTracker.data == nil)
-
-			flushDataIfFull(tracker, serializedEntry)
+			flushDataIfFull(tracker, serialized)
 		}
 
-		delete(entryTableIndexMap, minEntry)
-		delete(keyEntryMap, minKey)
-
 		entryArrays[tableIndex] = entryArrays[tableIndex][1:]
-
 		if len(entryArrays[tableIndex]) == 0 {
 			var err error
 			entryArrays[tableIndex], filesBlockOffsets[tableIndex], err = getBlockEntries(files[tableIndex], filesBlockOffsets[tableIndex], tableLimits[tableIndex])
@@ -430,10 +405,6 @@ func MergeTables(filesArg []*os.File, newFilePath string) {
 
 		entry := entryArrays[tableIndex][0]
 		keyStr := string(entry.Key)
-		if keyStr == "" {
-			continue
-		}
-
 		if _, exists := keyEntryMap[keyStr]; exists {
 			updateTableElement(tableLimits, files, entryTableIndexMap, keyEntryMap, entryHeap, entryArrays, filesBlockOffsets, tableIndex)
 		} else {
@@ -449,39 +420,40 @@ func MergeTables(filesArg []*os.File, newFilePath string) {
 		return
 	}
 
-	flushDataBytes(tracker.dataTracker.data, tracker)
-	flushIndexBytes(tracker)
-	flushSummaryBytes(tracker)
-
-	indexOffset := *tracker.indexTracker.offset
-	summaryOffset := *tracker.summaryTracker.offset
-
-	err := WriteFooter(tracker.dataTracker.file, indexOffset, summaryOffset, 0)
-	if err != nil {
-		panic(err)
-	}
-
-	if err := tracker.dataTracker.file.Sync(); err != nil {
-		panic(err)
-	}
-	if tracker.indexTracker.file != nil {
-		if err := tracker.indexTracker.file.Sync(); err != nil {
+	if strings.HasSuffix(newFilePath, "-compact.bin") {
+		flushDataBytes(tracker.dataTracker.data, tracker)
+		flushIndexBytes(tracker)
+		flushSummaryBytes(tracker)
+		err := WriteFooter(tracker.dataTracker.file, *tracker.indexTracker.offset, *tracker.summaryTracker.offset, 0)
+		if err != nil {
 			panic(err)
 		}
-	}
-	if tracker.summaryTracker.file != nil {
-		if err := tracker.summaryTracker.file.Sync(); err != nil {
+		tracker.dataTracker.file.Sync()
+		tracker.indexTracker.file.Sync()
+		tracker.summaryTracker.file.Sync()
+	} else if strings.HasSuffix(newFilePath, "-data.bin") {
+		flushDataBytes(tracker.dataTracker.data, tracker)
+		flushIndexBytes(tracker)
+		flushSummaryBytes(tracker)
+		block := blockManager.NewBlock(3)
+		block.Add(SerializeEntry(tracker.summaryTracker.lastEntry, true))
+		blockManager.WriteBlock(tracker.summaryTracker.file, block)
+		err := binary.Write(tracker.summaryTracker.file, binary.LittleEndian, block.GetOffset())
+		if err != nil {
 			panic(err)
 		}
+		tracker.dataTracker.file.Sync()
+		tracker.indexTracker.file.Sync()
+		tracker.summaryTracker.file.Sync()
+	} else {
+		panic("Invalid file suffix: must end in -compact.bin or -data.bin")
 	}
 
 	closeTracker(tracker)
 
-	info, err := os.Stat(newFilePath)
-	if err != nil {
-		fmt.Println("File does not exist after merge:", err)
-	} else {
-		fmt.Println("File size after merge:", info.Size())
+	// Debug
+	if info, err := os.Stat(tracker.dataTracker.file.Name()); err == nil {
+		fmt.Println("Final merged SSTable file size:", info.Size())
 	}
 
 	getGeneration(true)
@@ -683,9 +655,10 @@ func defineTracker(newFilePath string, tracker *Tracker) {
 // data = data.bin fajl (isti prefix)
 // index = index.bin fajl (isti prefix)
 func defineTrackerCompact(newFilePath string, tracker *Tracker) {
-	dataPath := strings.Replace(newFilePath, "compact.bin", "data.bin", 1)
-	indexPath := strings.Replace(newFilePath, "compact.bin", "index.bin", 1)
-	summaryPath := newFilePath // kompaktni fajl je summary
+	basePath := strings.TrimSuffix(newFilePath, "-compact.bin")
+	dataPath := basePath + "-data.bin"
+	indexPath := basePath + "-index.bin"
+	summaryPath := newFilePath
 
 	var err error
 	tracker.dataTracker.file, err = os.OpenFile(dataPath, os.O_RDWR|os.O_CREATE, 0644)
@@ -808,15 +781,17 @@ func flushFooter(tracker *Tracker) {
 
 func flushSummaryBytes(tracker *Tracker) {
 	var err error
-	if tracker.summaryTracker.file == nil {
-		summaryPath := tracker.summaryTracker.path
-		tracker.summaryTracker.file, err = os.Create(summaryPath)
+
+	summaryPath := tracker.summaryTracker.path
+	file := tracker.summaryTracker.file
+	if file == nil {
+		file, err = os.OpenFile(summaryPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 		if err != nil {
-			panic("cannot create summary file: " + err.Error())
+			panic("cannot open summary file for writing: " + err.Error())
 		}
+		tracker.summaryTracker.file = file
 	}
 
-	file := tracker.summaryTracker.file
 	offset := tracker.summaryTracker.offset
 	tracker.summaryTracker.offsetStart = *offset
 
