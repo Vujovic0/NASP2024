@@ -184,7 +184,7 @@ func PrepareSSTableBlocks(filePath string, data []byte, dataBlocksCheck bool, bl
 	return ch
 }
 
-func getGeneration(increment bool) uint64 {
+func GetGeneration(increment bool) uint64 {
 	var generation uint64
 	dataPath := getDataPath()
 	filePathMeta := filepath.Join(dataPath, "metaData.bin")

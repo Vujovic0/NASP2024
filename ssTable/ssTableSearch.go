@@ -462,7 +462,8 @@ func SearchOne(filePath string, key []byte, prefix bool) ([]byte, uint64) {
 
 // Last element is the maximum bound for the sstable
 // This function returns this key in []byte
-func getMaximumBound(summaryFile *os.File) ([]byte, error) {
+// Takes either "summary.bin" or "compact.bin"
+func GetMaximumBound(summaryFile *os.File) ([]byte, error) {
 	boundStart := getBoundIndex(summaryFile)
 	block := blockManager.ReadBlock(summaryFile, uint64(boundStart))
 	if block == nil {

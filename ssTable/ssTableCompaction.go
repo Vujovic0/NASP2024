@@ -96,7 +96,7 @@ func checkLimit(offset uint64, limit uint64) (error, bool) {
 //
 // Returns array of entry pointers, new block offset.
 // Returns error if block type is other than 0 or 1.
-func getBlockEntries(file *os.File, offset uint64, limit uint64) ([]*Entry, uint64, error) {
+func GetBlockEntries(file *os.File, offset uint64, limit uint64) ([]*Entry, uint64, error) {
 	err, endCheck := checkLimit(offset, limit)
 	if err != nil {
 		return nil, 0, err
@@ -330,7 +330,7 @@ func MergeTables(filesArg []*os.File, newFilePath string) {
 	//fills up heap and a map with entries and the index of their file
 	for i := 0; i < len(entryArrays); i++ {
 		if len(entryArrays[i]) == 0 {
-			entryArrays[i], filesBlockOffsets[i], err = getBlockEntries(files[i], filesBlockOffsets[i], tableLimits[i])
+			entryArrays[i], filesBlockOffsets[i], err = GetBlockEntries(files[i], filesBlockOffsets[i], tableLimits[i])
 		}
 		if err != nil {
 			panic(err)
@@ -373,7 +373,7 @@ func MergeTables(filesArg []*os.File, newFilePath string) {
 		}
 
 		if len(entryArrays[tableIndex]) == 0 {
-			entryArrays[tableIndex], filesBlockOffsets[tableIndex], err = getBlockEntries(files[tableIndex], filesBlockOffsets[tableIndex], tableLimits[tableIndex])
+			entryArrays[tableIndex], filesBlockOffsets[tableIndex], err = GetBlockEntries(files[tableIndex], filesBlockOffsets[tableIndex], tableLimits[tableIndex])
 			if err != nil {
 				panic(err)
 			}
@@ -427,7 +427,7 @@ func updateTableElement(
 	for {
 		// if truncation reaches the last entry, try to load new entries
 		if len(entryArrays[tableIndex]) == 0 {
-			entryArrays[tableIndex], filesBlockOffsets[tableIndex], _ = getBlockEntries(files[tableIndex], filesBlockOffsets[tableIndex], tableLimits[tableIndex])
+			entryArrays[tableIndex], filesBlockOffsets[tableIndex], _ = GetBlockEntries(files[tableIndex], filesBlockOffsets[tableIndex], tableLimits[tableIndex])
 		}
 		// return if no more entries can be read
 		if len(entryArrays[tableIndex]) == 0 {
