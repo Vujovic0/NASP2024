@@ -6,3 +6,4 @@ var MaxLSMLevel byte = 3
 var IndexSparsity byte = 5
 var SummarySparsity byte = 5
 var VariableEncoding bool = true
+var UseCompactSSTable bool = true
