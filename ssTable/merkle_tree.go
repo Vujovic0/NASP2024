@@ -1,4 +1,4 @@
-package main
+package ssTable
 
 import (
 	"bytes"
@@ -135,7 +135,7 @@ func (mt *MerkleTree) buildTree() {
 
 }
 
-func (mt *MerkleTree) getRoot() uint32 {
+func (mt *MerkleTree) GetRoot() uint32 {
 	if len(mt.TreeLevels) == 0 {
 		return 0 // Ako stablo nema nivoe, vracamo 0
 	}
@@ -241,9 +241,9 @@ func testSerialization() {
 	}
 
 	// Uporedjujemo root hash-ove
-	fmt.Printf("Original Root:     %d\n", original.getRoot())
-	fmt.Printf("Deserialized Root: %d\n", deserialized.getRoot())
-	fmt.Printf("Roots match: %t\n", original.getRoot() == deserialized.getRoot())
+	fmt.Printf("Original Root:     %d\n", original.GetRoot())
+	fmt.Printf("Deserialized Root: %d\n", deserialized.GetRoot())
+	fmt.Printf("Roots match: %t\n", original.GetRoot() == deserialized.GetRoot())
 }
 
 // Struktura za rezultat validacije
@@ -265,7 +265,7 @@ func ValidateSSTableNodeByNode(currentTree *MerkleTree, originalElements []*Elem
 	expectedTree := NewMerkleTree(originalElements)
 
 	// 1. Prvo poredimo root hash-ove
-	if currentTree.getRoot() == expectedTree.getRoot() {
+	if currentTree.GetRoot() == expectedTree.GetRoot() {
 		result.ErrorMessage = "SSTable je validna - nema izmena"
 		return result
 	}
@@ -334,7 +334,7 @@ func UserValidateSSTable() {
 
 	// Kreiramo trenutno stablo
 	currentTree := NewMerkleTree(originalSSTableElements)
-	fmt.Printf("Trenutni root: %d\n", currentTree.getRoot())
+	fmt.Printf("Trenutni root: %d\n", currentTree.GetRoot())
 
 	// Test 1: Validacija neizmenjene SSTable
 	fmt.Println("\n1. Validacija originalne SSTable:")
@@ -367,6 +367,84 @@ func UserValidateSSTable() {
 	fmt.Printf("   Poruka: %s\n", result.ErrorMessage)
 }
 
+// Struktura za razliku u Merkle stablu
+type MerkleDiff struct {
+	Level   int
+	Index   int
+	HashOld uint32
+	HashNew uint32
+}
+
+// Pronalazi sve razlike u listovima izmedju dva Merkle stabla (oldTree, newTree)
+func FindAllLeafMerkleDifferences(oldTree, newTree *MerkleTree) []MerkleDiff {
+	maxLevel := len(oldTree.TreeLevels) - 1
+	if len(newTree.TreeLevels)-1 < maxLevel {
+		maxLevel = len(newTree.TreeLevels) - 1
+	}
+	var diffs []MerkleDiff
+	findAllLeafDiffsRecursive(oldTree, newTree, maxLevel, 0, &diffs)
+	return diffs
+}
+
+// Rekurzivna pomocna funkcija za pronalazenje svih razlika u listovima
+func findAllLeafDiffsRecursive(oldTree, newTree *MerkleTree, level, index int, diffs *[]MerkleDiff) {
+	// 1. Provera da li je nivo validan
+	if level < 0 || level >= len(oldTree.TreeLevels) || level >= len(newTree.TreeLevels) {
+		return
+	}
+	// Uzimamo hasheve za trenutni nivo
+	oldLevel := oldTree.TreeLevels[level]
+	newLevel := newTree.TreeLevels[level]
+
+	// 2. Provera da li je indeks validan
+	if index >= len(oldLevel) || index >= len(newLevel) {
+		return
+	}
+
+	// 3. Ako su hash-ovi isti, nema potrebe za daljim poredjenjem ovog podstabla
+	if oldLevel[index] == newLevel[index] {
+		return
+	}
+
+	// 4. Ako smo na nivou listova (level == 0), belezimo razliku
+	if level == 0 {
+		*diffs = append(*diffs, MerkleDiff{
+			Level:   level,
+			Index:   index,
+			HashOld: oldLevel[index],
+			HashNew: newLevel[index],
+		})
+		return
+	}
+
+	// U suprotnom, rekurzivno proveravamo levo i desno dete
+	leftChildIdx := index * 2
+	rightChildIdx := index*2 + 1
+
+	findAllLeafDiffsRecursive(oldTree, newTree, level-1, leftChildIdx, diffs)
+	findAllLeafDiffsRecursive(oldTree, newTree, level-1, rightChildIdx, diffs)
+}
+
+func testFindAllLeafMerkleDifferences() {
+	// Primer CRC32 hash-ova za stara i nova stabla
+	hashesOld := []uint32{123, 456, 789, 1011}
+	hashesNew := []uint32{123, 999, 789, 2022} // drugi i cetvrti hash su razliciti
+
+	oldTree := NewMerkleTreeFromHashes(hashesOld)
+	newTree := NewMerkleTreeFromHashes(hashesNew)
+
+	diffs := FindAllLeafMerkleDifferences(oldTree, newTree)
+
+	if len(diffs) == 0 {
+		fmt.Println("Nema razlika u listovima!")
+	} else {
+		fmt.Println("Razlike u listovima:")
+		for _, diff := range diffs {
+			fmt.Printf("Level: %d, Index: %d, HashOld: %d, HashNew: %d\n", diff.Level, diff.Index, diff.HashOld, diff.HashNew)
+		}
+	}
+}
+
 // func main() {
 // 	// Test podaci sa Element objektima
 // 	testElements := []*Element{
@@ -383,10 +461,13 @@ func UserValidateSSTable() {
 // 		fmt.Printf("Level %d: %v\n", i, level)
 // 	}
 
-// 	fmt.Println("Merkle Root:", merkleTree.getRoot())
+// 	fmt.Println("Merkle Root:", merkleTree.GetRoot())
 
 // 	testSerialization()
 
 // 	// Korisnicka validacija SSTable
 // 	UserValidateSSTable()
+
+// 	testFindAllLeafMerkleDifferences()
+
 // }

@@ -39,7 +39,7 @@ func searchCompact(filePath string, key []byte, prefix bool) ([]byte, uint64, er
 	indexStart = binary.LittleEndian.Uint64(footerData[17:25])
 	summaryStart = binary.LittleEndian.Uint64(footerData[25:33])
 
-	maximumBound, err := getMaximumBound(file)
+	maximumBound, err := GetMaximumBound(file)
 	if err != nil {
 		panic(err)
 	}
@@ -259,7 +259,7 @@ func searchSeparated(filePath string, key []byte, offset uint64, prefix bool) ([
 
 	fileType := filePath[len(filePath)-11:]
 	if fileType == "summary.bin" {
-		maximumBound, err := getMaximumBound(file)
+		maximumBound, err := GetMaximumBound(file)
 		if err != nil {
 			panic(err)
 		}
@@ -462,7 +462,8 @@ func SearchOne(filePath string, key []byte, prefix bool) ([]byte, uint64) {
 
 // Last element is the maximum bound for the sstable
 // This function returns this key in []byte
-func getMaximumBound(summaryFile *os.File) ([]byte, error) {
+// Takes either "summary.bin" or "compact.bin"
+func GetMaximumBound(summaryFile *os.File) ([]byte, error) {
 	boundStart := getBoundIndex(summaryFile)
 	block := blockManager.ReadBlock(summaryFile, uint64(boundStart))
 	if block == nil {
