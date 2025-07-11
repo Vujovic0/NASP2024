@@ -7,3 +7,4 @@ var IndexSparsity byte = 5
 var SummarySparsity byte = 5
 var VariableEncoding bool = true
 var UseCompactSSTable bool = true
+var UseCompression bool = false
