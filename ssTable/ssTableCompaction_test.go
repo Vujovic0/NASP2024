@@ -9,6 +9,10 @@ import (
 )
 
 func TestCompactionBasicMerge(t *testing.T) {
+	dict := NewDictionary()
+	_ = dict.LoadFromDisk("data/dictionary.dict")
+	SetGlobalDict(dict)
+
 	dataPath := getDataPath()
 	os.RemoveAll(dataPath)
 
@@ -27,7 +31,7 @@ func TestCompactionBasicMerge(t *testing.T) {
 	folderPath := filepath.Join(dataPath, "L1")
 	os.Mkdir(folderPath, 0755)
 	newFilePath := filepath.Join(dataPath, "L1", "usertable-3-compact.bin")
-	MergeTables(files, newFilePath)
+	MergeTables(files, newFilePath, globalDict, false)
 	cleanUpOldFiles(t, files)
 
 	result := SearchAll([]byte("a"), false)
@@ -41,6 +45,9 @@ func TestCompactionBasicMerge(t *testing.T) {
 }
 
 func TestCompactionWithOverlappingKeys(t *testing.T) {
+	dict := NewDictionary()
+	_ = dict.LoadFromDisk("data/dictionary.dict")
+	SetGlobalDict(dict)
 	dataPath := getDataPath()
 	os.RemoveAll(dataPath)
 
@@ -60,7 +67,7 @@ func TestCompactionWithOverlappingKeys(t *testing.T) {
 	folderPath := filepath.Join(dataPath, "L1")
 	os.Mkdir(folderPath, 0755)
 	newFilePath := filepath.Join(dataPath, "L1", "usertable-3-compact.bin")
-	MergeTables(files, newFilePath)
+	MergeTables(files, newFilePath, globalDict, false)
 	cleanUpOldFiles(t, files)
 
 	checkEqual(t, string(SearchAll([]byte("a"), false)), "1", "Expected a=1")
@@ -69,6 +76,9 @@ func TestCompactionWithOverlappingKeys(t *testing.T) {
 }
 
 func TestCompactionWithEmptyTable(t *testing.T) {
+	dict := NewDictionary()
+	_ = dict.LoadFromDisk("data/dictionary.dict")
+	SetGlobalDict(dict)
 	dataPath := getDataPath()
 	os.RemoveAll(dataPath)
 
@@ -87,9 +97,8 @@ func TestCompactionWithEmptyTable(t *testing.T) {
 	folderPath := filepath.Join(dataPath, "L1")
 	os.Mkdir(folderPath, 0755)
 	newFilePath := filepath.Join(folderPath, "usertable-3-compact.bin")
-	MergeTables(files, newFilePath)
+	MergeTables(files, newFilePath, globalDict, false)
 
-	// ✅ Assert that new merged file does not exist (compaction result was empty)
 	if _, err := os.Stat(newFilePath); !os.IsNotExist(err) {
 		t.Errorf("Expected no merged file to be created, but %s exists", newFilePath)
 	}
@@ -97,6 +106,9 @@ func TestCompactionWithEmptyTable(t *testing.T) {
 }
 
 func TestCompactionMultiBlockEntries(t *testing.T) {
+	dict := NewDictionary()
+	_ = dict.LoadFromDisk("data/dictionary.dict")
+	SetGlobalDict(dict)
 	dataPath := getDataPath()
 	os.RemoveAll(dataPath)
 
@@ -117,7 +129,7 @@ func TestCompactionMultiBlockEntries(t *testing.T) {
 	folderPath := filepath.Join(dataPath, "L1")
 	os.Mkdir(folderPath, 0755)
 	newFilePath := filepath.Join(folderPath, "usertable-3-data.bin")
-	MergeTables(files, newFilePath)
+	MergeTables(files, newFilePath, globalDict, false)
 	cleanUpOldFiles(t, files)
 
 	resultA := SearchAll([]byte("a"), false)
@@ -130,6 +142,9 @@ func TestCompactionMultiBlockEntries(t *testing.T) {
 }
 
 func TestCompactionMultiBlockKeysCompact(t *testing.T) {
+	dict := NewDictionary()
+	_ = dict.LoadFromDisk("data/dictionary.dict")
+	SetGlobalDict(dict)
 	dataPath := getDataPath()
 	os.RemoveAll(dataPath)
 
@@ -155,7 +170,7 @@ func TestCompactionMultiBlockKeysCompact(t *testing.T) {
 	folderPath := filepath.Join(dataPath, "L1")
 	os.Mkdir(folderPath, 0755)
 	newFilePath := filepath.Join(folderPath, "usertable-3-compact.bin")
-	MergeTables(files, newFilePath)
+	MergeTables(files, newFilePath, globalDict, false)
 	cleanUpOldFiles(t, files)
 
 	// Verify correct retrieval of both large keys
@@ -167,6 +182,9 @@ func TestCompactionMultiBlockKeysCompact(t *testing.T) {
 }
 
 func TestCompactionMultiBlockKeysSeparate(t *testing.T) {
+	dict := NewDictionary()
+	_ = dict.LoadFromDisk("data/dictionary.dict")
+	SetGlobalDict(dict)
 	dataPath := getDataPath()
 	os.RemoveAll(dataPath)
 
@@ -192,7 +210,7 @@ func TestCompactionMultiBlockKeysSeparate(t *testing.T) {
 	folderPath := filepath.Join(dataPath, "L1")
 	os.Mkdir(folderPath, 0755)
 	newFilePath := filepath.Join(folderPath, "usertable-3-data.bin")
-	MergeTables(files, newFilePath)
+	MergeTables(files, newFilePath, globalDict, false)
 	cleanUpOldFiles(t, files)
 
 	// Verify correct retrieval of both large keys
@@ -204,6 +222,9 @@ func TestCompactionMultiBlockKeysSeparate(t *testing.T) {
 }
 
 func TestCompactionLargeKeyLargeValueSeparate(t *testing.T) {
+	dict := NewDictionary()
+	_ = dict.LoadFromDisk("data/dictionary.dict")
+	SetGlobalDict(dict)
 	dataPath := getDataPath()
 	os.RemoveAll(dataPath)
 
@@ -229,7 +250,7 @@ func TestCompactionLargeKeyLargeValueSeparate(t *testing.T) {
 	folderPath := filepath.Join(dataPath, "L1")
 	os.Mkdir(folderPath, 0755)
 	newFilePath := filepath.Join(folderPath, "usertable-3-data.bin")
-	MergeTables(files, newFilePath)
+	MergeTables(files, newFilePath, globalDict, false)
 	cleanUpOldFiles(t, files)
 
 	// Verify correct retrieval of both large keys
@@ -241,6 +262,9 @@ func TestCompactionLargeKeyLargeValueSeparate(t *testing.T) {
 }
 
 func TestCompactionLargeKeyLargeValueCompact(t *testing.T) {
+	dict := NewDictionary()
+	_ = dict.LoadFromDisk("data/dictionary.dict")
+	SetGlobalDict(dict)
 	dataPath := getDataPath()
 	os.RemoveAll(dataPath)
 
@@ -266,7 +290,7 @@ func TestCompactionLargeKeyLargeValueCompact(t *testing.T) {
 	folderPath := filepath.Join(dataPath, "L1")
 	os.Mkdir(folderPath, 0755)
 	newFilePath := filepath.Join(folderPath, "usertable-3-compact.bin")
-	MergeTables(files, newFilePath)
+	MergeTables(files, newFilePath, globalDict, false)
 	cleanUpOldFiles(t, files)
 
 	// Verify correct retrieval of both large keys
@@ -278,6 +302,9 @@ func TestCompactionLargeKeyLargeValueCompact(t *testing.T) {
 }
 
 func TestCompactionMixedSizesCompact(t *testing.T) {
+	dict := NewDictionary()
+	_ = dict.LoadFromDisk("data/dictionary.dict")
+	SetGlobalDict(dict)
 	dataPath := getDataPath()
 	os.RemoveAll(dataPath)
 
@@ -310,7 +337,7 @@ func TestCompactionMixedSizesCompact(t *testing.T) {
 	folderPath := filepath.Join(dataPath, "L1")
 	os.Mkdir(folderPath, 0755)
 	newFilePath := filepath.Join(folderPath, "usertable-3-compact.bin")
-	MergeTables(files, newFilePath)
+	MergeTables(files, newFilePath, globalDict, false)
 	cleanUpOldFiles(t, files)
 
 	// --- Validate all entries after compaction ---
@@ -328,6 +355,9 @@ func TestCompactionMixedSizesCompact(t *testing.T) {
 }
 
 func TestCompactionMixedSizesSeparate(t *testing.T) {
+	dict := NewDictionary()
+	_ = dict.LoadFromDisk("data/dictionary.dict")
+	SetGlobalDict(dict)
 	dataPath := getDataPath()
 	os.RemoveAll(dataPath)
 
@@ -360,7 +390,7 @@ func TestCompactionMixedSizesSeparate(t *testing.T) {
 	folderPath := filepath.Join(dataPath, "L1")
 	os.Mkdir(folderPath, 0755)
 	newFilePath := filepath.Join(folderPath, "usertable-3-data.bin")
-	MergeTables(files, newFilePath)
+	MergeTables(files, newFilePath, globalDict, false)
 	cleanUpOldFiles(t, files)
 
 	// --- Validate all entries after compaction ---
@@ -378,6 +408,9 @@ func TestCompactionMixedSizesSeparate(t *testing.T) {
 }
 
 func TestCompactionWithManyOverlappingKeys(t *testing.T) {
+	dict := NewDictionary()
+	_ = dict.LoadFromDisk("data/dictionary.dict")
+	SetGlobalDict(dict)
 	dataPath := getDataPath()
 	os.RemoveAll(dataPath)
 
@@ -415,7 +448,7 @@ func TestCompactionWithManyOverlappingKeys(t *testing.T) {
 	folderPath := filepath.Join(dataPath, "L1")
 	os.Mkdir(folderPath, 0755)
 	newFilePath := filepath.Join(dataPath, "L1", "usertable-3-compact.bin")
-	MergeTables(files, newFilePath)
+	MergeTables(files, newFilePath, globalDict, false)
 	cleanUpOldFiles(t, files)
 
 	// Check expected values after compaction (newest timestamp wins)
@@ -434,6 +467,9 @@ func TestCompactionWithManyOverlappingKeys(t *testing.T) {
 }
 
 func TestCompactionNewerKeysOverrideOlder(t *testing.T) {
+	dict := NewDictionary()
+	_ = dict.LoadFromDisk("data/dictionary.dict")
+	SetGlobalDict(dict)
 	dataPath := getDataPath()
 	os.RemoveAll(dataPath)
 
@@ -458,7 +494,7 @@ func TestCompactionNewerKeysOverrideOlder(t *testing.T) {
 	folderPath := filepath.Join(dataPath, "L1")
 	os.Mkdir(folderPath, 0755)
 	newFilePath := filepath.Join(dataPath, "L1", "usertable-3-compact.bin")
-	MergeTables(files, newFilePath)
+	MergeTables(files, newFilePath, globalDict, false)
 
 	time.Sleep(1 * time.Second)
 	CreateSeparatedSSTable(data1, last1, 2, 2)

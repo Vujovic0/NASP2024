@@ -4,18 +4,17 @@ import (
 	"bytes"
 )
 
-/*
-	Implementira ugradjen heap interfejs
-*/
+// EntryHeap is a min-heap of *Entry ordered by key
+// Used for merge during compaction
 
-type EntryHeap []string
+type EntryHeap []*Entry
 
 func (h EntryHeap) Len() int {
 	return len(h)
 }
 
 func (h EntryHeap) Less(i, j int) bool {
-	return bytes.Compare([]byte(h[i]), []byte(h[j])) < 0
+	return bytes.Compare(h[i].key, h[j].key) < 0
 }
 
 func (h EntryHeap) Swap(i, j int) {
@@ -23,7 +22,7 @@ func (h EntryHeap) Swap(i, j int) {
 }
 
 func (h *EntryHeap) Push(x any) {
-	*h = append(*h, x.(string))
+	*h = append(*h, x.(*Entry))
 }
 
 func (h *EntryHeap) Pop() any {

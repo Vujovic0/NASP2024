@@ -5,9 +5,12 @@ import (
 	"container/heap"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"hash/crc32"
 	"math"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/Vujovic0/NASP2024/config"
@@ -315,114 +318,93 @@ func getLimits(files []*os.File) []uint64 {
 // if the compaction makes an empty table, delete the opened file (this is checked using lastElement)
 // Folder where the new file should be needs to be created in advance
 // File pointers need to be sorted from oldest to newest sstable
-func MergeTables(filesArg []*os.File, newFilePath string) {
-	files := make([]*os.File, len(filesArg))
-	copy(files, filesArg)                                     //copies so the filesArg isn't updated while this function is running
-	var entryArrays [][]*Entry = make([][]*Entry, len(files)) //entries for each iteration of block read are put here
+func MergeTables(files []*os.File, outputPath string, dict *Dictionary, enableCompression bool) {
+	fmt.Println("Merging tables into:", outputPath)
+	tableLimits := getLimits(files)
+	filesBlockOffsets := make([]uint64, len(files))
+	entryArrays := make([][]*Entry, len(files))
+	tracker := initTracker()
+	defineTracker(outputPath, tracker)
 
-	var tableLimits []uint64 = getLimits(files) //array of limits for all files
-	var filesBlockOffsets []uint64 = make([]uint64, len(files))
-
-	var tracker *Tracker = new(Tracker)
-	tracker.dataTracker = new(DataTracker)
-	tracker.indexTracker = new(IndexTracker)
-	tracker.summaryTracker = new(SummaryTracker)
-
-	var entryTableIndexMap map[*Entry]int = make(map[*Entry]int)
-	var keyEntryMap map[string]*Entry = make(map[string]*Entry)
 	entryHeap := &EntryHeap{}
 	heap.Init(entryHeap)
-	defineTracker(newFilePath, tracker)
+	entryTableIndexMap := make(map[*Entry]int)
+	keyEntryMap := make(map[string]*Entry)
+	var mergedEntries []*Entry
 
-	var err error
-
-	//fills up heap and a map with entries and the index of their file
-	for i := 0; i < len(entryArrays); i++ {
-		if len(entryArrays[i]) == 0 {
-			entryArrays[i], filesBlockOffsets[i], err = GetBlockEntries(files[i], filesBlockOffsets[i], tableLimits[i])
-		}
-		if err != nil {
-			panic(err)
-		}
-		if len(entryArrays[i]) == 0 {
+	for i := 0; i < len(files); i++ {
+		var err error
+		entryArrays[i], filesBlockOffsets[i], err = GetBlockEntries(files[i], filesBlockOffsets[i], tableLimits[i])
+		if err != nil || len(entryArrays[i]) == 0 || entryArrays[i][0] == nil {
 			continue
 		}
-
-		entry := entryArrays[i][0]
-		keyStr := string(entry.key)
-		if _, exists := keyEntryMap[keyStr]; exists {
-			updateTableElement(
-				tableLimits,
-				files,
-				entryTableIndexMap,
-				keyEntryMap,
-				entryHeap,
-				entryArrays,
-				filesBlockOffsets,
-				i)
-		} else {
-			keyEntryMap[keyStr] = entry
-			entryTableIndexMap[entry] = i
-			heap.Push(entryHeap, keyStr)
-		}
+		e := entryArrays[i][0]
+		keyEntryMap[string(e.key)] = e
+		entryTableIndexMap[e] = i
+		heap.Push(entryHeap, e)
 	}
 
 	for entryHeap.Len() > 0 {
-		minKey := heap.Pop(entryHeap).(string)
-		minEntry := keyEntryMap[minKey]
-		tableIndex := entryTableIndexMap[minEntry]
-		entryArrays[tableIndex] = entryArrays[tableIndex][1:]
-		delete(entryTableIndexMap, minEntry)
-		delete(keyEntryMap, minKey)
+		min := heap.Pop(entryHeap).(*Entry)
+		i := entryTableIndexMap[min]
+		delete(entryTableIndexMap, min)
+		delete(keyEntryMap, string(min.key))
 
-		if !minEntry.tombstone {
-			serializedEntry := SerializeEntry(minEntry, false)
-			tracker.summaryTracker.lastEntry = minEntry
-			flushDataIfFull(tracker, serializedEntry)
+		if !min.tombstone {
+			mergedEntries = append(mergedEntries, min)
+			tracker.summaryTracker.lastEntry = min
 		}
 
-		if len(entryArrays[tableIndex]) == 0 {
-			entryArrays[tableIndex], filesBlockOffsets[tableIndex], err = GetBlockEntries(files[tableIndex], filesBlockOffsets[tableIndex], tableLimits[tableIndex])
-			if err != nil {
-				panic(err)
+		entryArrays[i] = entryArrays[i][1:]
+		if len(entryArrays[i]) == 0 {
+			var err error
+			entryArrays[i], filesBlockOffsets[i], err = GetBlockEntries(files[i], filesBlockOffsets[i], tableLimits[i])
+			if err != nil || len(entryArrays[i]) == 0 || entryArrays[i][0] == nil {
+				continue
 			}
 		}
-
-		if len(entryArrays[tableIndex]) == 0 {
-			continue
-		}
-
-		entry := entryArrays[tableIndex][0]
-		keyStr := string(entry.key)
-		if _, exists := keyEntryMap[keyStr]; exists {
-			updateTableElement(
-				tableLimits,
-				files,
-				entryTableIndexMap,
-				keyEntryMap,
-				entryHeap,
-				entryArrays,
-				filesBlockOffsets,
-				tableIndex)
+		e := entryArrays[i][0]
+		key := string(e.key)
+		if _, exists := keyEntryMap[key]; exists {
+			updateTableElement(tableLimits, files, entryTableIndexMap, keyEntryMap, entryHeap, entryArrays, filesBlockOffsets, i)
 		} else {
-			keyEntryMap[keyStr] = entry
-			entryTableIndexMap[entry] = tableIndex
-			heap.Push(entryHeap, keyStr)
+			keyEntryMap[key] = e
+			entryTableIndexMap[e] = i
+			heap.Push(entryHeap, e)
 		}
 	}
 
-	//if there is no last entry, that means there are no valid entries at all so
-	//the file should just get deleted
-	if tracker.summaryTracker.lastEntry == nil {
-		closeTracker(tracker)
-		os.Remove(newFilePath)
-		return
+	// Compress values if enabled
+	if enableCompression {
+		var values []string
+		for _, e := range mergedEntries {
+			values = append(values, string(e.value))
+		}
+		compressed, rawDict := CompressWithDictionary(values)
+		split := bytes.Split(compressed, []byte("|"))
+		for i := range mergedEntries {
+			mergedEntries[i].value = split[i]
+		}
+		saveErr := SaveDictionaryToFile(rawDict, "data/dictionary.dict")
+		if saveErr != nil {
+			panic("Failed to save dictionary: " + saveErr.Error())
+		}
 	}
+
+	for _, entry := range mergedEntries {
+		serialized := SerializeEntryWithCompression(string(entry.key), entry.value, entry.tombstone, entry.timeStamp, dict, enableCompression)
+		flushDataIfFull(tracker, serialized)
+	}
+
 	flushDataBytes(tracker.dataTracker.data, tracker)
 	flushIndexBytes(tracker)
 	flushSummaryBytes(tracker)
-	GetGeneration(true)
+	tracker.dataTracker.file.Sync()
+	tracker.indexTracker.file.Sync()
+	tracker.summaryTracker.file.Sync()
 	closeTracker(tracker)
+
+	fmt.Println("Compaction complete.")
 }
 
 // called when there is an already existing key on the heap
@@ -732,4 +714,62 @@ func flushFooter(tracker *Tracker) {
 
 	block := blockManager.InitBlock(tracker.summaryTracker.file.Name(), *offset, blockData)
 	blockManager.WriteBlock(tracker.summaryTracker.file, block)
+}
+
+// LeveledCompaction performs leveled compaction for a given level.
+// Assumes the files in the target level directory are sorted from oldest to newest.
+func LeveledCompaction(level int) {
+	nextLevel := level + 1
+	inputDir := filepath.Join(getDataPath(), fmt.Sprintf("L%d", level))
+	outputDir := filepath.Join(getDataPath(), fmt.Sprintf("L%d", nextLevel))
+	_ = os.MkdirAll(outputDir, 0755)
+
+	files, err := os.ReadDir(inputDir)
+	if err != nil {
+		panic("failed to read level directory: " + err.Error())
+	}
+
+	var dataFiles []string
+	for _, file := range files {
+		if strings.HasSuffix(file.Name(), "-data.bin") {
+			dataFiles = append(dataFiles, filepath.Join(inputDir, file.Name()))
+		}
+	}
+
+	// Sort files numerically by their generation number
+	sort.Slice(dataFiles, func(i, j int) bool {
+		return extractGeneration(dataFiles[i]) < extractGeneration(dataFiles[j])
+	})
+
+	// Open files
+	var filePointers []*os.File
+	for _, f := range dataFiles {
+		fp, err := os.Open(f)
+		if err != nil {
+			panic("failed to open data file: " + err.Error())
+		}
+		filePointers = append(filePointers, fp)
+	}
+
+	// Merge all files into one compacted file in next level
+	outputFileName := filepath.Join(outputDir, fmt.Sprintf("usertable-%d-compact.bin", GetGeneration(false)))
+	MergeTables(filePointers, outputFileName, globalDict, config.UseCompression)
+
+	// Close file pointers
+	for _, f := range filePointers {
+		_ = f.Close()
+	}
+
+	fmt.Println("Leveled compaction complete: L", level, "-> L", nextLevel)
+}
+
+func extractGeneration(filePath string) int {
+	base := filepath.Base(filePath)
+	parts := strings.Split(base, "-")
+	if len(parts) < 2 {
+		return 0
+	}
+	var gen int
+	fmt.Sscanf(parts[1], "%d", &gen)
+	return gen
 }
