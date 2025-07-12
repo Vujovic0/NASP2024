@@ -43,7 +43,7 @@ func searchCompact(filePath string, key []byte, prefix bool) ([]byte, uint64, er
 		return nil, 0, nil
 	}
 
-	maximumBound, err := getMaximumBound(file)
+	maximumBound, err := GetMaximumBound(file)
 	if err != nil {
 		panic(err)
 	}
@@ -263,7 +263,7 @@ func searchSeparated(filePath string, key []byte, offset uint64, prefix bool) ([
 
 	fileType := filePath[len(filePath)-11:]
 	if fileType == "summary.bin" {
-		maximumBound, err := getMaximumBound(file)
+		maximumBound, err := GetMaximumBound(file)
 		if err != nil {
 			panic(err)
 		}

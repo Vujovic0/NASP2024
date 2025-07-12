@@ -75,6 +75,15 @@ func initEntry(crc uint32, tombstone bool, timeStamp uint64, key []byte, value [
 		value:     value,
 	}
 }
+func InitEntry(crc uint32, tombstone bool, timeStamp uint64, key []byte, value []byte) *Entry {
+	return &Entry{
+		crc:       crc,
+		tombstone: tombstone,
+		timeStamp: timeStamp,
+		key:       key,
+		value:     value,
+	}
+}
 
 // Takes current block offset and compares it to the limit. Returns true if limit is same as offset and error if offstet > limit
 //
@@ -412,7 +421,7 @@ func MergeTables(filesArg []*os.File, newFilePath string) {
 	flushDataBytes(tracker.dataTracker.data, tracker)
 	flushIndexBytes(tracker)
 	flushSummaryBytes(tracker)
-	getGeneration(true)
+	GetGeneration(true)
 	closeTracker(tracker)
 }
 

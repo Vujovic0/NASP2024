@@ -235,7 +235,7 @@ func CreateCompactSSTable(data []byte, lastElementData []byte, summary_sparsity 
 		}
 	}
 
-	generation := getGeneration(true)
+	generation := GetGeneration(true)
 
 	fileName := dataPath + string(os.PathSeparator) + "L0" + string(os.PathSeparator) + "usertable-" + strconv.FormatUint(uint64(generation), 10) + "-compact.bin"
 	file, err := os.OpenFile(fileName, os.O_CREATE, 0664)
@@ -361,7 +361,7 @@ func CreateSeparatedSSTable(data []byte, lastElementData []byte, summary_sparsit
 		}
 	}
 
-	generation := getGeneration(true)
+	generation := GetGeneration(true)
 
 	fileName := dataPath + string(os.PathSeparator) + "L0" + string(os.PathSeparator) + "usertable-" + strconv.FormatUint(uint64(generation), 10)
 	FILEDATAPATH := fileName + "-data.bin"
@@ -566,3 +566,78 @@ func fetchMerkleTree(file *os.File, blockOFfset uint64) (*MerkleTree, uint64) {
 	tree, _ := deserializeMerkleTree(data)
 	return tree, blockOffset
 }
+
+// | CRC 4B | TimeStamp 8B | Tombstone 1B | Keysize 8B | Valuesize 8B | Key... | Value... |
+// KeyOnlyCheck will assure that only the key with its size is serialized
+// func SerializeEntry(key string, value string, tombstone bool, keyOnly bool) []byte {
+// 	if !config.VariableEncoding {
+// 		keyBytes := []byte(key)
+// 		keySize := len(keyBytes)
+// 		var dataBytes []byte
+// 		if keyOnly {
+// 			dataBytes = make([]byte, 8+keySize)
+// 			binary.LittleEndian.PutUint64(dataBytes[0:8], uint64(keySize))
+// 			copy(dataBytes[8:], keyBytes)
+// 			return dataBytes
+// 		}
+// 		valueBytes := []byte(value)
+// 		valueSize := len(valueBytes)
+// 		timestamp := time.Now().Unix()
+// 		sizeReserve := 4 + 8 + 1 + 8 + 8 + keySize + valueSize
+// 		if tombstone {
+// 			sizeReserve -= valueSize + 8
+// 		}
+// 		dataBytes = make([]byte, sizeReserve)
+// 		binary.LittleEndian.PutUint64(dataBytes[4:12], uint64(timestamp))
+// 		if tombstone {
+// 			dataBytes[12] = 1
+// 		}
+// 		binary.LittleEndian.PutUint64(dataBytes[13:21], uint64(keySize))
+// 		if !tombstone {
+// 			binary.LittleEndian.PutUint64(dataBytes[21:29], uint64(valueSize))
+// 			copy(dataBytes[29+keySize:], valueBytes)
+// 			copy(dataBytes[29:29+keySize], keyBytes)
+// 		} else {
+// 			copy(dataBytes[21:21+keySize], keyBytes)
+// 		}
+// 		crc := crc32.ChecksumIEEE(dataBytes[4:])
+// 		binary.LittleEndian.PutUint32(dataBytes[:4], crc)
+// 		return dataBytes
+// 	} else {
+// 		data := make([]byte, 0)
+// 		if keyOnly {
+// 			keyBytes := []byte(key)
+// 			data = binary.AppendUvarint(data, uint64(len(keyBytes)))
+// 			data = append(data, keyBytes...)
+// 			return data
+// 		}
+// 		//make space for crc32
+// 		data = append(data, []byte{0, 0, 0, 0}...)
+// 		timestamp := time.Now().Unix()
+// 		keyBytes := []byte(key)
+// 		valueBytes := []byte(value)
+// 		//append timestamp data
+// 		data = binary.AppendUvarint(data, uint64(timestamp))
+// 		//append tombstone
+// 		if tombstone {
+// 			data = binary.AppendUvarint(data, 1)
+// 		} else {
+// 			data = binary.AppendUvarint(data, 0)
+// 		}
+// 		//append key size
+// 		data = binary.AppendUvarint(data, uint64(len(keyBytes)))
+// 		//apend value size
+// 		if !tombstone {
+// 			data = binary.AppendUvarint(data, uint64(len(valueBytes)))
+// 		}
+// 		//append key
+// 		data = append(data, keyBytes...)
+// 		//append value
+// 		data = append(data, valueBytes...)
+
+// 		crc := crc32.ChecksumIEEE(data[4:])
+// 		//fill reserved data with crc32
+// 		binary.LittleEndian.PutUint32(data[0:4], crc)
+// 		return data
+// 	}
+// }

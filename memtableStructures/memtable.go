@@ -10,6 +10,8 @@ import (
 	"os"
 	"sort"
 	"time"
+
+	"github.com/Vujovic0/NASP2024/config"
 )
 
 type Config struct {
@@ -34,7 +36,7 @@ type Element struct {
 
 func initializeMemoryTable() *MemoryTable {
 	var config Config
-	configData, err := os.ReadFile("config (1).json")
+	configData, err := os.ReadFile("config.json")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -366,15 +368,27 @@ func elementToBytes(element *Element) []byte {
 	tmp := make([]byte, binary.MaxVarintLen64)
 
 	// 1. Duzina kljuca
-	n := binary.PutUvarint(tmp, uint64(len(element.Key)))
-	buffer.Write(tmp[:n])
+	if config.VariableEncoding {
+		n := binary.PutUvarint(tmp, uint64(len(element.Key)))
+		buffer.Write(tmp[:n])
+	} else {
+		keyLen := make([]byte, 8)
+		binary.LittleEndian.PutUint64(keyLen, uint64(len(element.Key)))
+		buffer.Write(keyLen)
+	}
 
 	// 2. Kljuc
 	buffer.WriteString(element.Key)
 
 	// 3. Timestamp
-	n = binary.PutVarint(tmp, element.Timestamp)
-	buffer.Write(tmp[:n])
+	if config.VariableEncoding {
+		n := binary.PutVarint(tmp, element.Timestamp)
+		buffer.Write(tmp[:n])
+	} else {
+		timestampBytes := make([]byte, 8)
+		binary.LittleEndian.PutUint64(timestampBytes, uint64(element.Timestamp))
+		buffer.Write(timestampBytes)
+	}
 
 	// 4. Tombstone
 	if element.Tombstone {
@@ -385,11 +399,16 @@ func elementToBytes(element *Element) []byte {
 
 	// 5. Ako element nije obrisan, upisujemo duzinu vrednosti i vrednost
 	if !element.Tombstone {
-		n = binary.PutUvarint(tmp, uint64(len(element.Value)))
-		buffer.Write(tmp[:n])
+		if config.VariableEncoding {
+			n := binary.PutUvarint(tmp, uint64(len(element.Value)))
+			buffer.Write(tmp[:n])
+		} else {
+			valueLen := make([]byte, 8)
+			binary.LittleEndian.PutUint64(valueLen, uint64(len(element.Value)))
+			buffer.Write(valueLen)
+		}
 		buffer.Write(element.Value)
 	}
-
 	return buffer.Bytes()
 }
 
@@ -397,14 +416,28 @@ func bytesToElement(data []byte) *Element {
 	buffer := bytes.NewReader(data)
 
 	// 1. Duzina kljuca
-	keyLen, _ := binary.ReadUvarint(buffer)
+	var keyLen uint64
+	if config.VariableEncoding {
+		keyLen, _ = binary.ReadUvarint(buffer)
+	} else {
+		keyLenBytes := make([]byte, 8)
+		buffer.Read(keyLenBytes)
+		keyLen = binary.LittleEndian.Uint64(keyLenBytes)
+	}
 
 	// 2. Kljuc
 	key := make([]byte, keyLen)
 	buffer.Read(key)
 
 	// 3. Timestamp
-	timestamp, _ := binary.ReadVarint(buffer)
+	var timestamp int64
+	if config.VariableEncoding {
+		timestamp, _ = binary.ReadVarint(buffer)
+	} else {
+		timestampBytes := make([]byte, 8)
+		buffer.Read(timestampBytes)
+		timestamp = int64(binary.LittleEndian.Uint64(timestampBytes))
+	}
 
 	// 4. Tombstone (1 bajt)
 	tombstoneByte, _ := buffer.ReadByte()
@@ -413,11 +446,17 @@ func bytesToElement(data []byte) *Element {
 	// 5. Ako nije tombstone, duzina vrednosti i vrednost
 	var value []byte
 	if !tombstone {
-		valueLen, _ := binary.ReadUvarint(buffer)
+		var valueLen uint64
+		if config.VariableEncoding {
+			valueLen, _ = binary.ReadUvarint(buffer)
+		} else {
+			valueLenBytes := make([]byte, 8)
+			buffer.Read(valueLenBytes)
+			valueLen = binary.LittleEndian.Uint64(valueLenBytes)
+		}
 		valueBytes := make([]byte, valueLen)
 		buffer.Read(valueBytes)
 		value = valueBytes
-
 	}
 
 	return &Element{
@@ -455,6 +494,18 @@ func (mt *MemoryTable) SearchByPrefix(prefix string) ([]*Element, bool) {
 	}
 
 	return results, len(results) > 0
+}
+
+func (mt *MemoryTable) Reset() {
+	// Resetovanje MemTable-a
+	if mt.Structure == "skiplist" {
+		mt.Data = newSkipList(16)
+	} else if mt.Structure == "btree" {
+		mt.Data = newBTree(16)
+	} else if mt.Structure == "hashMap" {
+		mt.Data = newHashMap(16)
+	}
+	mt.CurrentSize = 0
 }
 
 func (mt *MemoryTable) SearchByRange(startKey, endKey string) ([]*Element, bool) {
