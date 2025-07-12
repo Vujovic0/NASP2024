@@ -10,6 +10,7 @@ import (
 
 	"github.com/Vujovic0/NASP2024/blockManager"
 	"github.com/Vujovic0/NASP2024/config"
+	"github.com/Vujovic0/NASP2024/probabilisticDataStructures/bloomFilter"
 )
 
 const (
@@ -221,7 +222,7 @@ func GetGeneration(increment bool) uint64 {
 // First entry of summary is last entry of data format:
 // |KEYSIZE|KEY| and it's used to check if element is out of bounds
 // Entires of data are |CRC|TIMESTAMP|TOMBSTONE|KEYSIZE|VALUESIZE|KEY|VALUE
-func CreateCompactSSTable(data []byte, lastElementData []byte, summary_sparsity int, index_sparsity int) {
+func CreateCompactSSTable(data []byte, lastElementData []byte, summary_sparsity int, index_sparsity int, filter *bloomFilter.BloomFilter, tree *MerkleTree) {
 	dataPath := getDataPath()
 	if _, err := os.Stat(dataPath); os.IsNotExist(err) {
 		err := os.Mkdir(dataPath, 0755)
@@ -315,6 +316,14 @@ func CreateCompactSSTable(data []byte, lastElementData []byte, summary_sparsity 
 		blockCounter += 1
 	}
 
+	filterStart := blockCounter
+	filterData, _ := bloomFilter.SerializeToBytes(filter)
+	blockCounter = writeData(filterData, file, blockCounter)
+
+	treeStart := blockCounter
+	treeData, _ := serializeMerkleTree(tree)
+	blockCounter = writeData(treeData, file, blockCounter)
+
 	footerStart = blockCounter
 
 	var footerData []byte = make([]byte, 0)
@@ -323,6 +332,8 @@ func CreateCompactSSTable(data []byte, lastElementData []byte, summary_sparsity 
 	footerData = binary.LittleEndian.AppendUint64(footerData, indexStart)
 	footerData = binary.LittleEndian.AppendUint64(footerData, summaryStart)
 	footerData = binary.LittleEndian.AppendUint64(footerData, boundStart)
+	footerData = binary.LittleEndian.AppendUint64(footerData, filterStart)
+	footerData = binary.LittleEndian.AppendUint64(footerData, treeStart)
 
 	var blockData []byte = make([]byte, 9+len(footerData))
 	copy(blockData[9:], footerData)
@@ -337,7 +348,7 @@ func CreateCompactSSTable(data []byte, lastElementData []byte, summary_sparsity 
 // Entires of summary and index are of fomrat |KEYSIZE|VALUESIZE|KEY|VALUE|
 // First entry of summary is |8B KEYSIZE|KEY...| and it's used to check if element is out of bounds
 // Entires of data are |CRC|TIMESTAMP|TOMBSTONE|KEYSIZE|VALUESIZE|KEY|VALUE
-func CreateSeparatedSSTable(data []byte, lastElementData []byte, summary_sparsity int, index_sparsity int) {
+func CreateSeparatedSSTable(data []byte, lastElementData []byte, summary_sparsity int, index_sparsity int, filter *bloomFilter.BloomFilter, tree *MerkleTree) {
 	dataPath := getDataPath()
 	if _, err := os.Stat(dataPath); os.IsNotExist(err) {
 		err := os.Mkdir(dataPath, 0755)
@@ -356,6 +367,8 @@ func CreateSeparatedSSTable(data []byte, lastElementData []byte, summary_sparsit
 	FILEDATAPATH := fileName + "-data.bin"
 	FILEINDEXPATH := fileName + "-index.bin"
 	FILESUMMARYPATH := fileName + "-summary.bin"
+	FILEFILTERPATH := fileName + "-filter.bin"
+	FILETREEPATH := fileName + "-tree.bin"
 
 	fileData, err := os.OpenFile(FILEDATAPATH, os.O_CREATE, 0664)
 	if err != nil {
@@ -374,6 +387,18 @@ func CreateSeparatedSSTable(data []byte, lastElementData []byte, summary_sparsit
 		panic(err)
 	}
 	defer fileSummary.Close()
+
+	fileFilter, err := os.OpenFile(FILEFILTERPATH, os.O_CREATE, 0664)
+	if err != nil {
+		panic(err)
+	}
+	defer fileFilter.Close()
+
+	fileTree, err := os.OpenFile(FILETREEPATH, os.O_CREATE, 0664)
+	if err != nil {
+		panic(err)
+	}
+	defer fileTree.Close()
 
 	var indexData []byte
 	var summaryData []byte
@@ -454,4 +479,90 @@ func CreateSeparatedSSTable(data []byte, lastElementData []byte, summary_sparsit
 
 	block := blockManager.InitBlock(fileName, counter, blockData)
 	blockManager.WriteBlock(fileSummary, block)
+
+	filterData, _ := bloomFilter.SerializeToBytes(filter)
+	writeData(filterData, fileFilter, 0)
+
+	treeData, _ := serializeMerkleTree(tree)
+	writeData(treeData, fileTree, 0)
+
+}
+
+// crc 4b type 1b datasize 4b
+func writeData(data []byte, file *os.File, blockOffset uint64) uint64 {
+	dataPointer := uint64(0)
+	const blockHeaderSize = uint64(9)
+	blockBuffer := make([]byte, config.GlobalBlockSize)
+	dataLeft := len(data)
+	blockReserve := config.GlobalBlockSize - int(blockHeaderSize)
+	firstBlock := true
+
+	for dataLeft != 0 {
+		//add data to buffer
+		bytesToReadNum := min(dataLeft, blockReserve)
+		dataToWrite := data[dataPointer : dataPointer+uint64(bytesToReadNum)]
+		copy(blockBuffer[blockHeaderSize:], dataToWrite)
+		crc32 := crc32.ChecksumIEEE(dataToWrite)
+		blockType := determineBlockType(bytesToReadNum, blockReserve, firstBlock)
+
+		//add header
+		binary.LittleEndian.PutUint32(blockBuffer[0:4], crc32)
+		blockBuffer[4] = blockType
+		binary.LittleEndian.PutUint32(blockBuffer[5:9], uint32(bytesToReadNum))
+
+		block := blockManager.InitBlock(file.Name(), blockOffset, blockBuffer)
+		blockManager.WriteBlock(file, block)
+
+		//update variables for next block
+		blockOffset++
+		dataLeft -= bytesToReadNum
+		dataPointer += uint64(bytesToReadNum)
+		firstBlock = false
+		blockBuffer = make([]byte, config.GlobalBlockSize)
+	}
+	return blockOffset
+}
+
+func determineBlockType(dataLength int, blockReserve int, firstBlock bool) byte {
+	blockType := 0
+	if dataLength <= blockReserve {
+		if firstBlock {
+			blockType = 0
+		} else {
+			blockType = 3
+		}
+	} else {
+		if firstBlock {
+			blockType = 1
+		} else {
+			blockType = 2
+		}
+	}
+
+	return byte(blockType)
+}
+
+func readData(file *os.File, blockOffset uint64) ([]byte, uint64) {
+	data := make([]byte, 0)
+	for {
+		block := blockManager.ReadBlock(file, blockOffset)
+		data = append(data, block.GetData()[9:9+block.GetSize()]...)
+		if block.GetType() == 0 || block.GetType() == 3 {
+			break
+		}
+		blockOffset++
+	}
+	return data, blockOffset
+}
+
+func fetchFilter(file *os.File, blockOFfset uint64) (*bloomFilter.BloomFilter, uint64) {
+	data, blockOffset := readData(file, blockOFfset)
+	filter, _ := bloomFilter.DeserializeFromBytes(data)
+	return filter, blockOffset
+}
+
+func fetchMerkleTree(file *os.File, blockOFfset uint64) (*MerkleTree, uint64) {
+	data, blockOffset := readData(file, blockOFfset)
+	tree, _ := deserializeMerkleTree(data)
+	return tree, blockOffset
 }

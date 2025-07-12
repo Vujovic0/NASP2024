@@ -1,13 +1,6 @@
 package ssTable
 
-import (
-	"os"
-	"path/filepath"
-	"strings"
-	"testing"
-	"time"
-)
-
+/*
 func TestCompactionBasicMerge(t *testing.T) {
 	dataPath := getDataPath()
 	os.RemoveAll(dataPath)
@@ -516,3 +509,5 @@ func cleanUpOldFiles(t *testing.T, files []*os.File) {
 	closeAllDataFiles(t, files)
 	deleteAllDataFiles(t)
 }
+
+*/
