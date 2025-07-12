@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
-	"os"
 	"strings"
 )
 
@@ -17,9 +16,17 @@ type BloomFilter struct {
 	numOfElem    int
 }
 
-func NewBloomFilter(m uint, hash []HashWithSeed) *BloomFilter {
-	register := make([]byte, m)
-	return &BloomFilter{hash: hash, register: register, registerSize: m, stateCheck: int(float64(m) / math.Log(float64(len(hash))) * 0.6), numHashes: len(hash), numOfElem: 0}
+func NewBloomFilter(mBits uint, hash []HashWithSeed) *BloomFilter {
+	mBytes := (mBits + 7) / 8 // rounding to the next int
+	register := make([]byte, mBytes)
+	return &BloomFilter{
+		hash:         hash,
+		register:     register,
+		registerSize: mBits,
+		stateCheck:   int(float64(mBits) / math.Log(float64(len(hash))) * 0.6),
+		numHashes:    len(hash),
+		numOfElem:    0,
+	}
 }
 
 func MakeBloomFilter(array []string, falsePositive float64) *BloomFilter {
@@ -84,77 +91,81 @@ func AddData(bf *BloomFilter, array []string) *BloomFilter {
 	return bf
 }
 
-func Serialize(bf *BloomFilter, filename string) error {
-	file, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
-	if err != nil {
-		return fmt.Errorf("error while opening file: %v", err)
-	}
-	defer file.Close()
-	// Write the register size
-	if err := binary.Write(file, binary.LittleEndian, uint64(bf.registerSize)); err != nil {
-		return fmt.Errorf("error while writing register size: %v", err)
-	}
-	// Write the register data
-	if err := binary.Write(file, binary.LittleEndian, bf.register); err != nil {
-		return fmt.Errorf("error while writing register: %v", err)
-	}
-	// Write the number of hash functions
-	k := uint64(len(bf.hash))
-	if err := binary.Write(file, binary.LittleEndian, k); err != nil {
-		return fmt.Errorf("error while writing number of hash functions: %v", err)
-	}
-	// Serialize each hash function's seed
+func SerializeToBytes(bf *BloomFilter) ([]byte, error) {
+	buf := make([]byte, 0)
+
+	// Add size of a register (in bits)
+	tmp := make([]byte, 8)
+	binary.LittleEndian.PutUint64(tmp, uint64(bf.registerSize))
+	buf = append(buf, tmp...)
+
+	// Add register (bits like byte set)
+	buf = append(buf, bf.register...)
+
+	// Add number of hash functions
+	binary.LittleEndian.PutUint64(tmp, uint64(len(bf.hash)))
+	buf = append(buf, tmp...)
+
+	// Add every seed value
 	for _, hfn := range bf.hash {
-		// Write the seed length
-		seedLen := uint32(len(hfn.Seed))
-		if err := binary.Write(file, binary.LittleEndian, seedLen); err != nil {
-			return fmt.Errorf("error while writing hash function seed length: %v", err)
-		}
-		// Write the seed itself
-		if err := binary.Write(file, binary.LittleEndian, hfn.Seed); err != nil {
-			return fmt.Errorf("error while writing hash function seed: %v", err)
-		}
+		// length
+		lenSeed := uint32(len(hfn.Seed))
+		tmp4 := make([]byte, 4)
+		binary.LittleEndian.PutUint32(tmp4, lenSeed)
+		buf = append(buf, tmp4...)
+		// seed value
+		buf = append(buf, hfn.Seed...)
 	}
-	return nil
+	return buf, nil
 }
 
-// Deserialize reads the BloomFilter from a binary file
-func Deserialize(filename string) (*BloomFilter, error) {
-	file, err := os.Open(filename)
-	if err != nil {
-		return nil, fmt.Errorf("error opening file: %v", err)
-	}
-	defer file.Close()
+func DeserializeFromBytes(data []byte) (*BloomFilter, error) {
 	bf := &BloomFilter{}
-	// Read register size
-	if err := binary.Read(file, binary.LittleEndian, &bf.registerSize); err != nil {
-		return nil, fmt.Errorf("error while reading register size: %v", err)
+	offset := 0
+
+	// Read registerSize (8 bytes)
+	if offset+8 > len(data) {
+		return nil, fmt.Errorf("not enough data for register size")
 	}
-	// Read the register data
-	bf.register = make([]byte, bf.registerSize)
-	if err := binary.Read(file, binary.LittleEndian, bf.register); err != nil {
-		return nil, fmt.Errorf("error while reading register: %v", err)
+	bf.registerSize = uint(binary.LittleEndian.Uint64(data[offset:]))
+	offset += 8
+
+	// Calculate number of bytes in register
+	mBytes := (bf.registerSize + 7) / 8
+	if offset+int(mBytes) > len(data) {
+		return nil, fmt.Errorf("not enough data for register")
 	}
-	// Read number of hash functions
-	var k uint64
-	if err := binary.Read(file, binary.LittleEndian, &k); err != nil {
-		return nil, fmt.Errorf("error while reading number of hash functions: %v", err)
+	bf.register = make([]byte, mBytes)
+	copy(bf.register, data[offset:offset+int(mBytes)])
+	offset += int(mBytes)
+
+	// Number of hash functions (8 bytes)
+	if offset+8 > len(data) {
+		return nil, fmt.Errorf("not enough data for hash function count")
 	}
+	k := binary.LittleEndian.Uint64(data[offset:])
+	offset += 8
+
+	// Raed all hash functions
 	bf.hash = make([]HashWithSeed, k)
-	// Read each hash function's seed
 	for i := uint64(0); i < k; i++ {
-		var seedLen uint32
-		// Read the seed length
-		if err := binary.Read(file, binary.LittleEndian, &seedLen); err != nil {
-			return nil, fmt.Errorf("error while reading hash function seed length: %v", err)
+		if offset+4 > len(data) {
+			return nil, fmt.Errorf("not enough data for seed length")
 		}
-		// Read the seed
+		seedLen := binary.LittleEndian.Uint32(data[offset:])
+		offset += 4
+		if offset+int(seedLen) > len(data) {
+			return nil, fmt.Errorf("not enough data for seed content")
+		}
 		seed := make([]byte, seedLen)
-		if err := binary.Read(file, binary.LittleEndian, seed); err != nil {
-			return nil, fmt.Errorf("error while reading hash function seed: %v", err)
-		}
-		// Create HashWithSeed and store it
+		copy(seed, data[offset:offset+int(seedLen)])
+		offset += int(seedLen)
 		bf.hash[i] = HashWithSeed{Seed: seed}
 	}
+
+	bf.numHashes = len(bf.hash)
+	bf.stateCheck = int(float64(bf.registerSize) / math.Log(float64(bf.numHashes)) * 0.6)
+	bf.numOfElem = 0 // reset number of added elements, we don't know exact state
+
 	return bf, nil
 }

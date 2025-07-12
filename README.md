@@ -1,2 +1,2 @@
 # NASP2024
-Projekat za predmet "Napredi algoritmi i strukture podataka"
+Projekat za predmet "Napredni algoritmi i strukture podataka"

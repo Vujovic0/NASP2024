@@ -1,9 +1,14 @@
 package memtableStructures
 
-import "fmt"
+import (
+	"fmt"
+	"sort"
+	"strings"
+)
 
 type BTreeNode struct {
-	keys     []int        // array of keys
+	keys     []string     // array of keys
+	values   []Element    // array of values
 	degree   int          // minimum degree
 	children []*BTreeNode // children nodes of a current node
 	n        int          // current number of keys
@@ -11,8 +16,9 @@ type BTreeNode struct {
 }
 
 type BTree struct {
-	root   *BTreeNode // first node
-	degree int        // minimum degree
+	root        *BTreeNode // first node
+	degree      int        // minimum degree
+	lastElement *Element
 }
 
 func newBTree(_degree int) *BTree {
@@ -24,7 +30,8 @@ func newBTree(_degree int) *BTree {
 
 func NewBTreeNode(_degree int, _isLeaf bool) *BTreeNode {
 	return &BTreeNode{
-		keys:     make([]int, 2*_degree-1),
+		keys:     make([]string, 2*_degree-1),
+		values:   make([]Element, 2*_degree-1),
 		children: make([]*BTreeNode, 2*_degree),
 		n:        0,
 		isLeaf:   _isLeaf,
@@ -32,7 +39,7 @@ func NewBTreeNode(_degree int, _isLeaf bool) *BTreeNode {
 	}
 }
 
-func (treeNode *BTreeNode) findKey(k int) int {
+func (treeNode *BTreeNode) findKey(k string) int {
 	i := 0
 	for i < treeNode.n && treeNode.keys[i] < k {
 		i++
@@ -40,7 +47,7 @@ func (treeNode *BTreeNode) findKey(k int) int {
 	return i
 }
 
-func (treeNode *BTreeNode) remove(k int) {
+func (treeNode *BTreeNode) remove(k string) {
 	idx := treeNode.findKey(k)
 
 	// Case 1: The key to be removed is present in this node
@@ -57,7 +64,7 @@ func (treeNode *BTreeNode) remove(k int) {
 
 		// If this node is a leaf, then the key is not present in the B-Tree
 		if treeNode.isLeaf {
-			fmt.Printf("The key %d does not exist in the tree\n", k)
+			fmt.Printf("The key %s does not exist in the tree\n", k)
 			return
 		}
 
@@ -78,10 +85,31 @@ func (treeNode *BTreeNode) remove(k int) {
 	}
 }
 
+func (t *BTree) findNewLastElement() *Element {
+	current := t.root
+	if current == nil {
+		return nil
+	}
+
+	for !current.isLeaf {
+		current = current.children[len(current.children)-1]
+	}
+
+	// Iterate backwards to find the last non-tombstoned element
+	for i := current.n - 1; i >= 0; i-- {
+		if !current.values[i].Tombstone {
+			return &current.values[i]
+		}
+	}
+
+	return nil // No valid element found
+}
+
 func (treeNode *BTreeNode) removeFromLeaf(idx int) {
 	// Move all keys after the idx-th position one place backward
 	for i := idx + 1; i < treeNode.n; i++ {
 		treeNode.keys[i-1] = treeNode.keys[i]
+		treeNode.values[i-1] = treeNode.values[i]
 	}
 	// Reduce the count of keys
 	treeNode.n--
@@ -107,7 +135,7 @@ func (treeNode *BTreeNode) removeFromNonLeaf(index int) {
 	}
 }
 
-func (treeNode *BTreeNode) getPred(idx int) int {
+func (treeNode *BTreeNode) getPred(idx int) string {
 	// Start at the child preceding idx and move to the rightmost leaf node
 	cur := treeNode.children[idx]
 	for !cur.isLeaf {
@@ -117,7 +145,7 @@ func (treeNode *BTreeNode) getPred(idx int) int {
 	return cur.keys[cur.n-1]
 }
 
-func (treeNode *BTreeNode) getSucc(idx int) int {
+func (treeNode *BTreeNode) getSucc(idx int) string {
 	// Start at the child following idx and move to the leftmost leaf node
 	cur := treeNode.children[idx+1]
 	for !cur.isLeaf {
@@ -135,6 +163,7 @@ func (treeNode *BTreeNode) borrowFromPrev(index int) {
 	// Move all keys in children[index] one step ahead.
 	for i := child.n - 1; i >= 0; i-- {
 		child.keys[i+1] = child.keys[i]
+		child.values[i+1] = child.values[i]
 	}
 
 	// If children[index] is not a leaf, move all its child pointers one step ahead.
@@ -146,6 +175,7 @@ func (treeNode *BTreeNode) borrowFromPrev(index int) {
 
 	// Set the child's first key equal to keys[index-1] from the current node.
 	child.keys[0] = treeNode.keys[index-1]
+	child.values[0] = treeNode.values[index-1]
 
 	// Move sibling's last child as children[index]'s first child.
 	if !child.isLeaf {
@@ -154,6 +184,7 @@ func (treeNode *BTreeNode) borrowFromPrev(index int) {
 
 	// Move the key from the sibling to the parent, reducing the number of keys in the sibling.
 	treeNode.keys[index-1] = sibling.keys[sibling.n-1]
+	treeNode.values[index-1] = sibling.values[sibling.n-1]
 
 	child.n++
 	sibling.n--
@@ -166,6 +197,7 @@ func (treeNode *BTreeNode) borrowFromNext(index int) {
 
 	// Insert keys[index] as the last key in children[index].
 	child.keys[child.n] = treeNode.keys[index]
+	child.values[child.n] = treeNode.values[index]
 
 	// Insert sibling's first child as the last child into children[index].
 	if !child.isLeaf {
@@ -174,10 +206,12 @@ func (treeNode *BTreeNode) borrowFromNext(index int) {
 
 	// Set the first key of the sibling into keys[index].
 	treeNode.keys[index] = sibling.keys[0]
+	treeNode.values[index] = sibling.values[0]
 
 	// Shift all keys in sibling one step behind.
 	for i := 1; i < sibling.n; i++ {
 		sibling.keys[i-1] = sibling.keys[i]
+		sibling.values[i-1] = sibling.values[i]
 	}
 
 	// Shift all child pointers in sibling one step behind.
@@ -199,10 +233,12 @@ func (treeNode *BTreeNode) merge(index int) {
 
 	// Pull a key from the current node and insert it into the (degree-1)th position of children[index].
 	child.keys[treeNode.degree-1] = treeNode.keys[index]
+	child.values[treeNode.degree-1] = treeNode.values[index]
 
 	// Copy the keys from children[index+1] to children[index] at the end.
 	for i := 0; i < sibling.n; i++ {
 		child.keys[i+treeNode.degree] = sibling.keys[i]
+		child.values[i+treeNode.degree] = sibling.values[i]
 	}
 
 	// Copy the child pointers from children[index+1] to children[index].
@@ -215,6 +251,7 @@ func (treeNode *BTreeNode) merge(index int) {
 	// Shift all keys after index in the current node one step before.
 	for i := index + 1; i < treeNode.n; i++ {
 		treeNode.keys[i-1] = treeNode.keys[i]
+		treeNode.values[i-1] = treeNode.values[i]
 	}
 
 	// Shift all child pointers after (index+1) in the current node one step before.
@@ -249,10 +286,11 @@ func (treeNode *BTreeNode) fill(index int) {
 	}
 }
 
-func (tree *BTree) insert(k int) {
+func (tree *BTree) insert(element Element) {
 	if tree.root == nil { // if tree is empty, we initialize root
 		tree.root = NewBTreeNode(tree.degree, true)
-		tree.root.keys[0] = k
+		tree.root.keys[0] = element.Key
+		tree.root.values[0] = element
 		tree.root.n = 1
 	} else {
 		if tree.root.n == 2*tree.degree-1 {
@@ -260,37 +298,44 @@ func (tree *BTree) insert(k int) {
 			node.children[0] = tree.root
 			node.splitChild(0, tree.root)
 			i := 0
-			if node.keys[0] < k {
+			if node.keys[0] < element.Key {
 				i++
 			}
-			node.children[i].insertNonFull(k)
+			node.children[i].insertNonFull(element)
 			tree.root = &node
 		} else {
-			tree.root.insertNonFull(k)
+			tree.root.insertNonFull(element)
 		}
+	}
+
+	// Azuriranje poslednjeg elementa
+	if tree.lastElement == nil || element.Timestamp > tree.lastElement.Timestamp {
+		tree.lastElement = &element
 	}
 }
 
-func (treeNode *BTreeNode) insertNonFull(k int) {
+func (treeNode *BTreeNode) insertNonFull(element Element) {
 	i := treeNode.n - 1
 	if treeNode.isLeaf {
-		for i >= 0 && treeNode.keys[i] > k {
+		for i >= 0 && treeNode.keys[i] > element.Key {
 			treeNode.keys[i+1] = treeNode.keys[i]
+			treeNode.values[i+1] = treeNode.values[i]
 			i--
 		}
-		treeNode.keys[i+1] = k
+		treeNode.keys[i+1] = element.Key
+		treeNode.values[i+1] = element
 		treeNode.n += 1
 	} else {
-		for i >= 0 && treeNode.keys[i] > k {
+		for i >= 0 && treeNode.keys[i] > element.Key {
 			i--
 		}
 		if treeNode.children[i+1].n == 2*treeNode.degree-1 {
 			treeNode.splitChild(i+1, treeNode.children[i+1])
-			if treeNode.keys[i+1] < k {
+			if treeNode.keys[i+1] < element.Key {
 				i++
 			}
 		}
-		treeNode.children[i+1].insertNonFull(k)
+		treeNode.children[i+1].insertNonFull(element)
 	}
 }
 
@@ -300,9 +345,10 @@ func (treeNode *BTreeNode) splitChild(i int, splitingNode *BTreeNode) {
 
 	for i := 0; i < deg-1; i++ {
 		node.keys[i] = splitingNode.keys[i+deg]
+		node.values[i] = splitingNode.values[i+deg]
 	}
 
-	if splitingNode.isLeaf == false {
+	if !splitingNode.isLeaf {
 		for i := 0; i < deg; i++ {
 			node.children[i] = splitingNode.children[i+deg]
 		}
@@ -316,46 +362,48 @@ func (treeNode *BTreeNode) splitChild(i int, splitingNode *BTreeNode) {
 
 	for j := treeNode.n - 1; j >= i; j-- {
 		treeNode.keys[j+1] = treeNode.keys[j]
+		treeNode.values[j+1] = treeNode.values[j]
 	}
 	treeNode.keys[i] = splitingNode.keys[deg-1]
+	treeNode.values[i] = splitingNode.values[deg-1]
 
 	treeNode.n++
 }
 
-func (treeNode *BTreeNode) traverse() {
-	i := 0
-	for ; i < treeNode.n; i++ {
-		if treeNode.isLeaf == false {
-			treeNode.children[i].traverse()
-		}
-		fmt.Println("Value of a node ", treeNode.keys[i])
-	}
+// func (treeNode *BTreeNode) traverse() {
+// 	i := 0
+// 	for ; i < treeNode.n; i++ {
+// 		if !treeNode.isLeaf {
+// 			treeNode.children[i].traverse()
+// 		}
+// 		fmt.Println("Value of a node ", treeNode.keys[i])
+// 	}
 
-	if treeNode.isLeaf == false {
-		treeNode.children[i].traverse()
-	}
-}
+// 	if !treeNode.isLeaf {
+// 		treeNode.children[i].traverse()
+// 	}
+// }
 
-func (treeNode *BTreeNode) search(k int) *BTreeNode {
+func (treeNode *BTreeNode) search(k string) (*Element, bool) {
 	i := 0
 	for i < treeNode.n && k > treeNode.keys[i] {
 		i++
 	}
 
-	if treeNode.keys[i] == k {
+	if i < treeNode.n && treeNode.keys[i] == k {
 		fmt.Println("Key", k, "is found")
-		return treeNode
+		return &treeNode.values[i], true
 	}
 
 	if treeNode.isLeaf {
 		fmt.Println("Key", k, "is not found")
-		return treeNode // key not found
+		return nil, false // key not found
 	}
 
 	return treeNode.children[i].search(k)
 }
 
-func (tree *BTree) remove(k int) {
+func (tree *BTree) remove(k string) {
 	if tree.root == nil {
 		fmt.Println("Tree is empty")
 		return
@@ -370,24 +418,160 @@ func (tree *BTree) remove(k int) {
 			tree.root = tree.root.children[0]
 		}
 	}
+
+	// If the last element is deleted, find the new last element
+	if tree.root.isLeaf && tree.root.n > 0 && tree.root.values[tree.root.n-1].Key == k {
+		tree.findNewLastElement()
+	}
 }
 
-func (tree *BTree) traverse() {
-	tree.root.traverse()
+func (tree *BTree) update(element Element) {
+	if tree.root == nil {
+		tree.insert(element)
+	} else {
+		tree.root.update(element)
+	}
 }
 
-func (tree *BTree) search(k int) {
-	tree.root.search(k)
+func (treeNode *BTreeNode) update(element Element) {
+	i := 0
+	for i < treeNode.n && element.Key > treeNode.keys[i] {
+		i++
+	}
+
+	if i < treeNode.n && treeNode.keys[i] == element.Key {
+		// Ažuriramo vrednost ako ključ već postoji
+		treeNode.values[i] = element
+	} else {
+		if treeNode.isLeaf {
+			// Umećemo novi element ako ključ ne postoji
+			treeNode.insertNonFull(element)
+		} else {
+			if treeNode.children[i].n == 2*treeNode.degree-1 {
+				treeNode.splitChild(i, treeNode.children[i])
+				if treeNode.keys[i] < element.Key {
+					i++
+				}
+			}
+			treeNode.children[i].update(element)
+		}
+	}
 }
 
-func main() {
-	tree := newBTree(3)
-	tree.insert(1)
-	tree.insert(2)
-	tree.search(2)
-	tree.insert(15)
-	tree.traverse()
-	tree.remove(2)
-	tree.traverse()
-	tree.search(2)
+// func (tree *BTree) traverse() {
+// 	// tree.root.traverse()
+// 	if tree.root != nil {
+// 		tree.root.traverse()
+// 	}
+// }
+
+func (tree *BTree) search(k string) (*Element, bool) {
+	if tree.root == nil {
+		return nil, false
+	}
+	return tree.root.search(k)
 }
+
+func (tree *BTree) getAllElements() []*Element {
+	var elements []*Element
+	if tree.root != nil {
+		tree.root.collectElements(&elements)
+	}
+	return elements
+}
+
+func (treeNode *BTreeNode) collectElements(elements *[]*Element) {
+	i := 0
+	for ; i < treeNode.n; i++ {
+		if !treeNode.isLeaf {
+			treeNode.children[i].collectElements(elements)
+		}
+		*elements = append(*elements, &treeNode.values[i])
+	}
+
+	if !treeNode.isLeaf {
+		treeNode.children[i].collectElements(elements)
+	}
+}
+
+func (tree *BTree) LastElement() *Element {
+	return tree.lastElement
+}
+
+func (bt *BTree) searchByPrefix(prefix string) []*Element {
+	var results []*Element
+	bt.searchPrefixInNode(bt.root, prefix, &results)
+
+	// Sortiramo rezultate po kljucu
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Key < results[j].Key
+	})
+
+	return results
+}
+
+func (bt *BTree) searchPrefixInNode(node *BTreeNode, prefix string, results *[]*Element) {
+	if node == nil {
+		return
+	}
+
+	// Pretraga u trenutnom cvoru
+	for i := 0; i < node.n; i++ {
+		elem := &node.values[i]
+		if strings.HasPrefix(elem.Key, prefix) && !elem.Tombstone {
+			*results = append(*results, elem)
+		}
+	}
+
+	// Rekurzivna pretraga u deci
+	if !node.isLeaf {
+		for _, child := range node.children {
+			bt.searchPrefixInNode(child, prefix, results)
+		}
+	}
+}
+
+func (bt *BTree) searchByRange(startKey, endKey string) []*Element {
+	var results []*Element
+	bt.searchRangeInNode(bt.root, startKey, endKey, &results)
+
+	// Sortiramo rezultate po kljucu
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Key < results[j].Key
+	})
+
+	return results
+}
+
+func (bt *BTree) searchRangeInNode(node *BTreeNode, startKey, endKey string, results *[]*Element) {
+	if node == nil {
+		return
+	}
+
+	// Pretrazujemo elemente u trenutnom cvoru
+	for i := 0; i < node.n; i++ {
+		elem := &node.values[i]
+		if elem.Key >= startKey && elem.Key <= endKey && !elem.Tombstone {
+			*results = append(*results, elem)
+		}
+	}
+
+	// Rekurzivna pretraga u deci
+	if !node.isLeaf {
+		for _, child := range node.children {
+			bt.searchRangeInNode(child, startKey, endKey, results)
+		}
+	}
+}
+
+// func main() {
+// 	tree := newBTree(3)
+// 	tree.insert(1)
+// 	tree.insert(2)
+// 	tree.search(2)
+// 	tree.insert(15)
+// 	tree.traverse()
+// 	tree.remove(2)
+// 	tree.traverse()
+// 	tree.search(2)
+// }

@@ -26,7 +26,6 @@ func Test() {
 func getTokenCount(text string) map[string]int {
 	tokenCountMap := make(map[string]int)
 	textSliced := strings.Split(text, " ")
-	// brojimo koliko imamo puta neku rec unutar teksta
 	for _, textSlice := range textSliced {
 		textSlice = strings.TrimSpace(textSlice)
 		if textSlice == "" {
@@ -51,7 +50,6 @@ func getTokenHash(tokenCountMap map[string]int) map[string][16]byte {
 	return tokenHashMap
 }
 
-// Vraca simhash vrednost nekog teksta
 func GetFingerPrint(text string) [16]byte {
 	tokenCountMap := getTokenCount(text)
 	tokenHashMap := getTokenHash(tokenCountMap)
