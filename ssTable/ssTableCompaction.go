@@ -323,14 +323,13 @@ func MergeTables(files []*os.File, outputPath string, dict *Dictionary, enableCo
 	tableLimits := getLimits(files)
 	filesBlockOffsets := make([]uint64, len(files))
 	entryArrays := make([][]*Entry, len(files))
-	tracker := initTracker()
-	defineTracker(outputPath, tracker)
 
 	entryHeap := &EntryHeap{}
 	heap.Init(entryHeap)
 	entryTableIndexMap := make(map[*Entry]int)
 	keyEntryMap := make(map[string]*Entry)
 	var mergedEntries []*Entry
+	var lastEntry *Entry
 
 	for i := 0; i < len(files); i++ {
 		var err error
@@ -352,7 +351,7 @@ func MergeTables(files []*os.File, outputPath string, dict *Dictionary, enableCo
 
 		if !min.tombstone {
 			mergedEntries = append(mergedEntries, min)
-			tracker.summaryTracker.lastEntry = min
+			lastEntry = min
 		}
 
 		entryArrays[i] = entryArrays[i][1:]
@@ -374,6 +373,15 @@ func MergeTables(files []*os.File, outputPath string, dict *Dictionary, enableCo
 		}
 	}
 
+	if len(mergedEntries) == 0 {
+		fmt.Println("No valid entries after compaction — skipping SSTable output.")
+		return
+	}
+
+	tracker := initTracker()
+	defineTracker(outputPath, tracker)
+	tracker.summaryTracker.lastEntry = lastEntry
+
 	// Compress values if enabled
 	if enableCompression {
 		var values []string
@@ -392,7 +400,7 @@ func MergeTables(files []*os.File, outputPath string, dict *Dictionary, enableCo
 	}
 
 	for _, entry := range mergedEntries {
-		serialized := SerializeEntryWithCompression(string(entry.key), entry.value, entry.tombstone, entry.timeStamp, dict, enableCompression)
+		serialized := SerializeEntry(entry, false)
 		flushDataIfFull(tracker, serialized)
 	}
 
@@ -447,7 +455,7 @@ func updateTableElement(
 		//add key to heap and update the entry:index map
 		keyEntryMap[string(entryToAdd.key)] = entryToAdd
 		entryTableIndexMap[entryToAdd] = tableIndex
-		heap.Push(entryHeap, string(entryToAdd.key))
+		heap.Push(entryHeap, entryToAdd)
 		return
 	}
 }
@@ -678,7 +686,7 @@ func flushSummaryBytes(tracker *Tracker) {
 	}
 
 	lastEntry := tracker.summaryTracker.lastEntry
-	lastEntryData := SerializeEntry(lastEntry, true)
+	lastEntryData := SerializeEntry(lastEntry, false)
 
 	tracker.summaryTracker.lastElementStart = *offset
 

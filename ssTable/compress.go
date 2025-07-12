@@ -1,7 +1,6 @@
 package ssTable
 
 import (
-	"encoding/binary"
 	"encoding/gob"
 	"fmt"
 	"os"
@@ -82,37 +81,4 @@ func LoadDictionaryFromFile(path string) (map[int]string, error) {
 	}
 
 	return reverse, nil
-}
-
-func SerializeEntryWithCompression(key string, value []byte, tombstone bool, timestamp uint64, dict *Dictionary, enableCompression bool) []byte {
-	buf := make([]byte, 0, 64)
-	tmp := make([]byte, 10)
-
-	// CRC (dummy 4 bytes)
-	buf = append(buf, 0, 0, 0, 0)
-
-	// Timestamp (varint)
-	n := binary.PutUvarint(tmp, timestamp)
-	buf = append(buf, tmp[:n]...)
-
-	// Tombstone (1 byte)
-	if tombstone {
-		buf = append(buf, 1)
-	} else {
-		buf = append(buf, 0)
-	}
-
-	// Key serialization
-	keyID := dict.GetOrAdd(key)
-	n = binary.PutUvarint(tmp, uint64(keyID))
-	buf = append(buf, tmp[:n]...)
-
-	// Value (compressed)
-	if !tombstone {
-		n = binary.PutUvarint(tmp, uint64(len(value)))
-		buf = append(buf, tmp[:n]...)
-		buf = append(buf, value...)
-	}
-
-	return buf
 }

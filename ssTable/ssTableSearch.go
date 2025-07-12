@@ -377,12 +377,13 @@ func searchSeparated(filePath string, key []byte, offset uint64, prefix bool) ([
 // Returns [] if the key was not found
 func SearchAll(key []byte, prefix bool) []byte {
 	dataPath := getDataPath()
-	iterator := 1
 	readOrder := GetReadOrder(dataPath)
 	for _, filePath := range readOrder {
-		iterator += 1
 		valueBytes, _ := SearchOne(filePath, key, prefix)
 		if valueBytes != nil {
+			if config.UseCompression && globalDict != nil && globalDict.ReverseMap != nil {
+				return []byte(DecompressValue(valueBytes, globalDict.ReverseMap))
+			}
 			return valueBytes
 		}
 	}

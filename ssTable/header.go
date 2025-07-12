@@ -1,8 +1,9 @@
 package ssTable
 
 import (
-	"github.com/Vujovic0/NASP2024/config"
 	"encoding/binary"
+
+	"github.com/Vujovic0/NASP2024/config"
 )
 
 // Header represent the number of bytes each header field takes up
