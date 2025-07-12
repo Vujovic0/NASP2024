@@ -41,7 +41,7 @@ func SearchData(bf *BloomFilter, data string) bool {
 	byteSlice := []byte(data)
 	for _, hfn := range bf.hash {
 		hashValue := hfn.Hash(byteSlice)
-		bitIndex := hashValue % uint64(bf.registerSize*8)
+		bitIndex := hashValue % uint64(bf.registerSize)
 		byteIndex := bitIndex / 8
 		bitPosition := bitIndex % 8
 		if bf.register[byteIndex]&(1<<bitPosition) == 0 {
@@ -80,7 +80,7 @@ func AddData(bf *BloomFilter, array []string) *BloomFilter {
 		byteSlice := []byte(data)
 		for _, hfn := range bf.hash {
 			hashValue := hfn.Hash(byteSlice)
-			bitIndex := hashValue % uint64(bf.registerSize*8)
+			bitIndex := hashValue % uint64(bf.registerSize)
 			byteIndex := bitIndex / 8
 			bitPosition := bitIndex % 8
 			bf.register[byteIndex] |= (1 << bitPosition)
