@@ -1,11 +1,20 @@
 package ssTable
 
 import (
+	"bytes"
 	"encoding/gob"
 	"fmt"
 	"os"
 	"strings"
 )
+
+func mapToByteSlices(strs []string) [][]byte {
+	result := make([][]byte, len(strs))
+	for i, s := range strs {
+		result[i] = []byte(s)
+	}
+	return result
+}
 
 func CompressWithDictionary(values []string) ([]byte, map[string]int) {
 	dict := make(map[string]int)
@@ -33,7 +42,7 @@ func CompressWithDictionary(values []string) ([]byte, map[string]int) {
 		compressed = append(compressed, strings.Join(encoded, ","))
 	}
 
-	return []byte(strings.Join(compressed, "|")), dict
+	return bytes.Join([][]byte(mapToByteSlices(compressed)), []byte{0xFF}), dict
 }
 
 func DecompressValue(value []byte, dict map[int]string) string {

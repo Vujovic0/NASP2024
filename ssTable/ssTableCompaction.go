@@ -389,7 +389,10 @@ func MergeTables(files []*os.File, outputPath string, dict *Dictionary, enableCo
 			values = append(values, string(e.value))
 		}
 		compressed, rawDict := CompressWithDictionary(values)
-		split := bytes.Split(compressed, []byte("|"))
+		split := bytes.Split(compressed, []byte{0xFF})
+		if len(split) != len(mergedEntries) {
+			panic(fmt.Sprintf("Mismatch between compressed values (%d) and merged entries (%d)", len(split), len(mergedEntries)))
+		}
 		for i := range mergedEntries {
 			mergedEntries[i].value = split[i]
 		}
