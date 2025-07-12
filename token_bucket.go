@@ -31,7 +31,17 @@ func NewTokenBucket(capacity int, timeInterval time.Duration) *TokenBucket {
 }
 
 func initializeTokenBucket() *TokenBucket {
-	var config Config
+	// Podrazumevane vrednosti ukoliko nema konfiguracije
+	defaultCapacity := 10
+	defaultInterval := 5000 * time.Millisecond
+
+	// Postavljamo podrazumevane vrednosti
+	config := Config{
+		Capacity:     defaultCapacity,
+		TimeInterval: defaultInterval,
+	}
+
+	// var config Config
 	configData, err := os.ReadFile("config tokenBucket.json")
 	if err != nil {
 		log.Fatal(err)
@@ -39,9 +49,17 @@ func initializeTokenBucket() *TokenBucket {
 
 	err = json.Unmarshal(configData, &config)
 	if err != nil {
-		log.Fatal("Error parsing config: ", err)
+		fmt.Println("Konfiguracioni fajl nije pronadjen, koriste se podrazumevane vrednosti.")
 	}
 	// fmt.Println(config)
+
+	// Provera validnosti konfiguracije
+	if config.Capacity <= 0 {
+		config.Capacity = defaultCapacity
+	}
+	if config.TimeInterval <= 0 {
+		config.TimeInterval = defaultInterval
+	}
 
 	tokenBucket := NewTokenBucket(config.Capacity, config.TimeInterval)
 
@@ -126,10 +144,61 @@ func (tb *TokenBucket) LoadState(filename string) error {
 	return nil
 }
 
+func userConfig(defaultCapacity int, defaultInterval time.Duration) (int, time.Duration) {
+	var answer string
+	fmt.Printf("Podrazumevani broj tokena je %d, a podrazumevani interval resetovanja je %d ms.\n", defaultCapacity, defaultInterval.Milliseconds())
+	for {
+		fmt.Println("Da li zelite da promenite ove vrednosti?: ")
+		fmt.Println("[1] DA ")
+		fmt.Println("[2] NE ")
+		fmt.Scanln(&answer)
+
+		if answer == "1" {
+			var capacity int
+			var intervalMS int64
+
+			// Unos broja tokena
+			for {
+				fmt.Print("Unesite novi broj tokena: ")
+				_, err := fmt.Scanln(&capacity)
+				if err == nil && capacity > 0 {
+					break
+				}
+				fmt.Println("Pogresan unos! Molimo unesite ceo broj veci od 0.")
+				// Cistimo buffer
+				var dump string
+				fmt.Scanln(&dump)
+			}
+
+			// Unos intervala resetovanja
+			for {
+				fmt.Print("Unesite novi interval resetovanja u milisekundama: ")
+				_, err := fmt.Scanln(&intervalMS)
+				if err == nil && intervalMS > 0 {
+					break
+				}
+				fmt.Println("Pogresan unos! Molimo unesite ceo broj veci od 0.")
+				var dump string
+				fmt.Scanln(&dump)
+			}
+
+			interval := time.Duration(intervalMS) * time.Millisecond
+			return capacity, interval
+		} else if answer == "2" {
+			return defaultCapacity, defaultInterval
+		} else {
+			fmt.Println("Pogresan unos, molimo vas da unesete 1 ili 2.")
+		}
+	}
+}
+
 func main() {
 
 	tokenBucket := initializeTokenBucket()
 	fmt.Println(tokenBucket)
+
+	capacity, interval := userConfig(tokenBucket.capacity, tokenBucket.timeInterval)
+	tokenBucket = NewTokenBucket(capacity, interval)
 
 	// Load state from file
 	err := tokenBucket.LoadState("token_bucket_state.json")
