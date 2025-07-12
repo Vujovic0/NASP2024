@@ -29,13 +29,12 @@ func NewBloomFilter(mBits uint, hash []HashWithSeed) *BloomFilter {
 	}
 }
 
-func MakeBloomFilter(array []string, falsePositive float64) *BloomFilter {
-	numberOfElem := len(array)
+func MakeBloomFilter(numberOfElem int, falsePositive float64) *BloomFilter {
 	m := CalculateM(numberOfElem, falsePositive)
 	k := CalculateK(numberOfElem, m)
 	hash := CreateHashFunctions(k)
 	bf := NewBloomFilter(m, hash)
-	return AddData(bf, array)
+	return bf
 }
 
 func SearchData(bf *BloomFilter, data string) bool {
