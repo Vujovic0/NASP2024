@@ -21,10 +21,13 @@ type Config struct {
 }
 
 type MemoryTable struct {
-	Data        interface{} // Moze biti SkipList, BTree ili HashMap
-	MaxSize     uint64
-	Structure   string // Moze biti "btree","skiplist" ili "hashMap"
-	CurrentSize int
+	Data           interface{} // Moze biti SkipList, BTree ili HashMap
+	MaxSize        uint64
+	Structure      string // Moze biti "btree","skiplist" ili "hashMap"
+	CurrentSize    int
+	WALLastSegment string // NAME OF THE LAST WAL USED FOR THIS TABLE, NEEDED FOR THE WAL LOADING
+	WALBlockOffset int    // BLOCK INDEX IN SEGMENT
+	WALByteOffset  int    // BYTE OFFSET, NEEDED ONLY FOR BLOCK WHICH TYPE != 0
 }
 
 type Element struct {
@@ -52,9 +55,8 @@ func loadConfig() Config {
 }
 
 func initializeMemoryTable() *MemoryTable {
-	config := loadConfig()
-	// var config Config
-	configData, err := os.ReadFile("config.json")
+	var config Config
+	configData, err := os.ReadFile("./memtableStructures/config.json")
 	if err != nil {
 		log.Fatal(err)
 	}
