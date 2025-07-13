@@ -1,5 +1,32 @@
 {
-	"wal_size": 10,
-	"memtable_size": 10,
-	"memtable_structure": "skiplist"
+  "wal": {
+    "blocks_in_segment": 5
+  },
+  "memtable": {
+    "elements_in_single_table": 10,
+    "tables_count": 3,
+    "implementation_type": "skiplist"
+  },
+  "sstable": {
+    "summary_sparsity": 5,
+    "index_sparsity": 5,
+    "separate_files": false,
+    "compression": false,
+    "variable_encoding": false
+  },
+  "lsm_tree": {
+    "max_levels": 5,
+    "compaction_type": "tiered"
+  },
+  "cache": {
+    "size": 5
+  },
+  "block_manager_and_cache": {
+    "block_size_in_b": 4096,
+    "cache_size": 5
+  },
+  "token_bucket": {
+    "number_of_tokens": 10,
+    "interval_of_reseting_in_ms": 1000
+  }
 }
