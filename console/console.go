@@ -74,7 +74,7 @@ func Start() {
 		case 2:
 			Get(lruCacheFactory, memtable)
 		case 3:
-			Delete()
+			Delete(walFactory, memtable, lruCacheFactory)
 		case 4:
 			fmt.Println("--ABLE FUNCTIONS--\nPUT - putting key:value pair into the program\nGET - geting the value based on the given key\nDELETE - deleting the key along side it's value")
 			fmt.Println("AGREEMENT: Pair key:value from the perspective of the user are both in type string, but after the input, program restore the value into binary form.\n ...")
@@ -99,9 +99,9 @@ func Put(walFactory *wal.WAL, mtm *memtableStructures.MemTableManager, lruCache 
 	if walFactory == nil {
 		fmt.Println("WAL nije uspešno inicijalizovan")
 	}
-	offset, err := (*walFactory).WriteLogEntry(inputKey, inputValue)
+	offset, err := (*walFactory).WriteLogEntry(inputKey, inputValue, false)
 	if err == nil {
-		mtm.Insert(inputKey, []byte(inputValue), walFactory.CurrentFile.Name(), walFactory.CurrentBlock, offset)
+		mtm.Insert(inputKey, []byte(inputValue), false, walFactory.CurrentFile.Name(), walFactory.CurrentBlock, offset)
 		lruCache.Put(inputKey, inputValue)
 		fmt.Println("Uspesno unet WAL")
 	} else {
@@ -115,19 +115,19 @@ func Get(lruCache *lruCache.LRUCache, memtableMenager *memtableStructures.MemTab
 	fmt.Println("Enter the key:")
 	var inputKey string
 	fmt.Scan(&inputKey)
-	value, found := lruCache.Get(inputKey)
-	if found {
-		fmt.Println("Found value {" + value + "} for input key {" + inputKey + "}")
-		fmt.Println("Value founded in LRU Cache")
-		lruCache.Put(inputKey, value)
-		return value
-	}
 	element, found := memtableMenager.Search(inputKey)
 	if found {
 		fmt.Println("Found value {" + string(element.Value) + "} for input key {" + inputKey + "}")
 		fmt.Println("Value founded in Memtable")
 		lruCache.Put(inputKey, string(element.Value))
 		return string(element.Value)
+	}
+	value, found := lruCache.Get(inputKey)
+	if found {
+		fmt.Println("Found value {" + value + "} for input key {" + inputKey + "}")
+		fmt.Println("Value founded in LRU Cache")
+		lruCache.Put(inputKey, value)
+		return value
 	}
 	valueBytes := ssTable.SearchAll([]byte(inputKey), false)
 	if len(valueBytes) > 0 {
@@ -143,14 +143,21 @@ func Get(lruCache *lruCache.LRUCache, memtableMenager *memtableStructures.MemTab
 	return ""
 }
 
-func Delete() {
+func Delete(walFactory *wal.WAL, mtm *memtableStructures.MemTableManager, lruCache *lruCache.LRUCache) {
 	fmt.Println("Enter the key:")
 	var inputKey string
 	fmt.Scan(&inputKey)
 	// HERE WE NEED TO GET THE VALUE BASED ON THE KEY ALONGSIDE DELETING BOTH FROM MEMORY AND DISK IF IT'S PERMANENT (?)
 	// MISSING THE APPROVE FROM WAL, DATA NEED TO BE SEND TO THE WAL WERE IT WILL BE STORED TILL DISMISED TO THE DISK
-	var value string
-	fmt.Println("Value " + value + " with the key " + inputKey + " was deleted.")
+	offset, err := (*walFactory).WriteLogEntry(inputKey, "", false)
+	if err == nil {
+		mtm.Insert(inputKey, []byte(""), true, walFactory.CurrentFile.Name(), walFactory.CurrentBlock, offset)
+		//lruCache.Put(inputKey, inputValue)
+		fmt.Println("Uspesno unet WAL")
+	} else {
+		fmt.Println("Neuspesno unet WAL")
+	}
+	fmt.Println("Log with key {" + inputKey + "} is deleted.")
 }
 
 func stringToBin(s string) (binString string) {

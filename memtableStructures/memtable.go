@@ -131,12 +131,12 @@ func initializeHashMapMemtable(config *Config) *MemoryTable {
 	return memTable
 }
 
-func (mt *MemoryTable) Insert(key string, value []byte) {
+func (mt *MemoryTable) Insert(key string, value []byte, tombstone bool) {
 	element := Element{
 		Key:       key,
 		Value:     value,
 		Timestamp: time.Now().Unix(),
-		Tombstone: false,
+		Tombstone: tombstone,
 	}
 
 	fmt.Printf("Inserting element: Key=%s, Value=%s\n", key, value)

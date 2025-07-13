@@ -157,7 +157,7 @@ func (wal *WAL) DeserializeOffsetFile() (string, uint32, uint64) {
 
 }
 
-func NewLogEntry(key string, value string) *LogEntry {
+func NewLogEntry(key string, value string, tombstone bool) *LogEntry {
 	logEntry := new(LogEntry)
 	logEntry.Key = key
 	logEntry.Value = value
@@ -166,8 +166,8 @@ func NewLogEntry(key string, value string) *LogEntry {
 	return logEntry
 }
 
-func (wal *WAL) WriteLogEntry(key string, value string) (int, error) {
-	log := NewLogEntry(key, value)
+func (wal *WAL) WriteLogEntry(key string, value string, tombstone bool) (int, error) {
+	log := NewLogEntry(key, value, tombstone)
 	logEntryBytes := log.SerializeLogEntry()
 	logSizeNeeded := log.GetSerializedLogSize()
 	var offset int
