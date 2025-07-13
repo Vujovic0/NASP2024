@@ -381,10 +381,8 @@ func searchSeparated(filePath string, key []byte, offset uint64, prefix bool) ([
 // Returns [] if the key was not found
 func SearchAll(key []byte, prefix bool) []byte {
 	dataPath := getDataPath()
-	iterator := 1
 	readOrder := GetReadOrder(dataPath)
 	for _, filePath := range readOrder {
-		iterator += 1
 		valueBytes, _ := SearchOne(filePath, key, prefix)
 		if valueBytes != nil {
 			return valueBytes
@@ -589,4 +587,14 @@ func FindLastSmallerKey(key []byte, keys [][]byte, dataBlock bool, prefix bool) 
 		}
 	}
 	return -1
+}
+
+func getFooter(file *os.File) *blockManager.Block {
+	fileInfo, err := file.Stat()
+	if err != nil {
+		panic(err)
+	}
+	fileSize := fileInfo.Size()
+	footerBlockIndex := math.Ceil(float64(fileSize)/float64(config.GlobalBlockSize)) - 1
+	return blockManager.ReadBlock(file, uint64(footerBlockIndex))
 }

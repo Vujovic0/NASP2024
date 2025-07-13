@@ -20,7 +20,7 @@ func createTree(crc32 []uint32) *MerkleTree {
 }
 
 func createFilter(keys []string) *bloomFilter.BloomFilter {
-	filter := bloomFilter.MakeBloomFilter(1000, 0.01)
+	filter := bloomFilter.MakeBloomFilter(len(keys), 0.01)
 	bloomFilter.AddData(filter, keys)
 	return filter
 }
