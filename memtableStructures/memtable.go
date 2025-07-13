@@ -392,7 +392,7 @@ func elementToBytes(element *Element) []byte {
 	tmp := make([]byte, binary.MaxVarintLen64)
 
 	// 1. Timestamp
-	if config.VariableEncoding {
+	if config.VariableHeader {
 		n := binary.PutVarint(tmp, element.Timestamp)
 		buffer.Write(tmp[:n])
 	} else {
@@ -409,7 +409,7 @@ func elementToBytes(element *Element) []byte {
 	}
 
 	// 3. Duzina kljuca
-	if config.VariableEncoding {
+	if config.VariableHeader {
 		n := binary.PutUvarint(tmp, uint64(len(element.Key)))
 		buffer.Write(tmp[:n])
 	} else {
@@ -420,7 +420,7 @@ func elementToBytes(element *Element) []byte {
 
 	// 4. Ako element nije tombstone, upisujemo duzinu vrednosti
 	if !element.Tombstone {
-		if config.VariableEncoding {
+		if config.VariableHeader {
 			n := binary.PutUvarint(tmp, uint64(len(element.Value)))
 			buffer.Write(tmp[:n])
 		} else {
@@ -446,7 +446,7 @@ func bytesToElement(data []byte) *Element {
 
 	// 1. Timestamp
 	var timestamp int64
-	if config.VariableEncoding {
+	if config.VariableHeader {
 		timestamp, _ = binary.ReadVarint(buffer)
 	} else {
 		timestampBytes := make([]byte, 8)
@@ -460,7 +460,7 @@ func bytesToElement(data []byte) *Element {
 
 	// 3. Duzina kljuca
 	var keyLen uint64
-	if config.VariableEncoding {
+	if config.VariableHeader {
 		keyLen, _ = binary.ReadUvarint(buffer)
 	} else {
 		keyLenBytes := make([]byte, 8)
@@ -471,7 +471,7 @@ func bytesToElement(data []byte) *Element {
 	// 4. Valuesize (samo ako nije tombstone)
 	var valueLen uint64
 	if !tombstone {
-		if config.VariableEncoding {
+		if config.VariableHeader {
 			valueLen, _ = binary.ReadUvarint(buffer)
 		} else {
 			valueLenBytes := make([]byte, 8)

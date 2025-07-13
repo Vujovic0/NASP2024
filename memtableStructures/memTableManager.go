@@ -431,7 +431,7 @@ func (mtm *MemTableManager) FlushMemTableToSSTable(memTable *MemoryTable, tableI
 		lastEntry := ssTable.InitEntry(0, false, uint64(lastElem.Timestamp), []byte(lastElem.Key), []byte{})
 		lastElementData := ssTable.SerializeEntry(lastEntry, true)
 		// 3. Koristi vrednosti iz konfiguracije
-		if config.VariableEncoding {
+		if !config.SeparateFiles {
 			ssTable.CreateCompactSSTable(
 				sstableData,
 				lastElementData,

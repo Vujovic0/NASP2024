@@ -262,7 +262,7 @@ func CreateCompactSSTable(data []byte, lastElementData []byte, summary_sparsity 
 		if !bytes.Equal(keyBinary, channelResult.Key) {
 			keyBinary = channelResult.Key
 			if counter%index_sparsity == 0 {
-				if !config.VariableEncoding {
+				if !config.VariableHeader {
 					indexData = binary.LittleEndian.AppendUint64(indexData, uint64(len(keyBinary)))
 					indexData = append(indexData, keyBinary...)
 					indexData = binary.LittleEndian.AppendUint64(indexData, uint64(channelResult.Block.GetOffset()))
@@ -287,7 +287,7 @@ func CreateCompactSSTable(data []byte, lastElementData []byte, summary_sparsity 
 		if !bytes.Equal(keyBinary, channelResult.Key) {
 			keyBinary = channelResult.Key
 			if counter%summary_sparsity == 0 {
-				if !config.VariableEncoding {
+				if !config.VariableHeader {
 					summaryData = binary.LittleEndian.AppendUint64(summaryData, uint64(len(keyBinary)))
 					summaryData = append(summaryData, keyBinary...)
 					summaryData = binary.LittleEndian.AppendUint64(summaryData, uint64(channelResult.Block.GetOffset()))
@@ -413,7 +413,7 @@ func CreateSeparatedSSTable(data []byte, lastElementData []byte, summary_sparsit
 		if !bytes.Equal(keyBinary, channelResult.Key) {
 			keyBinary = channelResult.Key
 			if counter%uint64(index_sparsity) == 0 {
-				if !config.VariableEncoding {
+				if !config.VariableHeader {
 					indexData = binary.LittleEndian.AppendUint64(indexData, uint64(len(keyBinary)))
 					indexData = append(indexData, keyBinary...)
 					indexData = binary.LittleEndian.AppendUint64(indexData, uint64(channelResult.Block.GetOffset()))
@@ -436,7 +436,7 @@ func CreateSeparatedSSTable(data []byte, lastElementData []byte, summary_sparsit
 		if !bytes.Equal(keyBinary, channelResult.Key) {
 			keyBinary = channelResult.Key
 			if counter%uint64(summary_sparsity) == 0 {
-				if !config.VariableEncoding {
+				if !config.VariableHeader {
 					summaryData = binary.LittleEndian.AppendUint64(summaryData, uint64(len(keyBinary)))
 					summaryData = append(summaryData, keyBinary...)
 					summaryData = binary.LittleEndian.AppendUint64(summaryData, uint64(channelResult.Block.GetOffset()))

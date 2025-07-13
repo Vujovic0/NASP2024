@@ -12,7 +12,7 @@
     "index_sparsity": 5,
     "separate_files": false,
     "compression": false,
-    "variable_encoding": false
+    "variable_header": false
   },
   "lsm_tree": {
     "max_levels": 5,

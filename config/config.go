@@ -19,7 +19,7 @@ var SummarySparsity int = 5
 var IndexSparsity int = 5
 var SeparateFiles bool = false
 var Compression bool = false
-var VariableEncoding bool = false
+var VariableHeader bool = false
 
 // LSM TREE
 var MaxLevels int = 5
@@ -138,7 +138,7 @@ func SetConfigValues(cfg *Config) {
 	IndexSparsity = cfg.SSTable.IndexSparsity
 	SeparateFiles = cfg.SSTable.SeparateFiles
 	Compression = cfg.SSTable.Compression
-	VariableEncoding = cfg.SSTable.VariableEncoding
+	VariableHeader = cfg.SSTable.VariableEncoding
 
 	// LSM TREE
 	MaxLevels = cfg.LSMTree.MaxLevels

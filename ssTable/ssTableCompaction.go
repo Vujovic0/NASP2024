@@ -530,13 +530,13 @@ func flushDataBytes(array []byte, tracker *Tracker) {
 		if !bytes.Equal(lastKey, newKey) {
 			lastKey = newKey
 			if tracker.indexTracker.sparsity_counter%uint64(config.IndexSparsity) == 0 {
-				if config.VariableEncoding {
+				if config.VariableHeader {
 					tracker.indexTracker.data = binary.AppendUvarint(tracker.indexTracker.data, uint64(len(newKey)))
 				} else {
 					tracker.indexTracker.data = binary.LittleEndian.AppendUint64(tracker.indexTracker.data, uint64(len(newKey)))
 				}
 				tracker.indexTracker.data = append(tracker.indexTracker.data, newKey...)
-				if config.VariableEncoding {
+				if config.VariableHeader {
 					tracker.indexTracker.data = binary.AppendUvarint(tracker.indexTracker.data, uint64(*offset))
 				} else {
 					tracker.indexTracker.data = binary.LittleEndian.AppendUint64(tracker.indexTracker.data, uint64(*offset))
@@ -550,7 +550,7 @@ func flushDataBytes(array []byte, tracker *Tracker) {
 
 // | CRC 4B | TimeStamp 8B | Tombstone 1B | Keysize 8B | Valuesize 8B | Key... | Value... |
 func SerializeEntry(entry *Entry, bound bool) []byte {
-	if config.VariableEncoding {
+	if config.VariableHeader {
 		return serializeEntryCompressed(entry, bound)
 	} else {
 		return serializeEntryNonCompressed(entry, bound)
@@ -704,13 +704,13 @@ func flushIndexBytes(tracker *Tracker) {
 		if !bytes.Equal(lastKey, newKey) {
 			lastKey = newKey
 			if tracker.summaryTracker.sparsity_counter%uint64(config.SummarySparsity) == 0 {
-				if config.VariableEncoding {
+				if config.VariableHeader {
 					tracker.summaryTracker.data = binary.AppendUvarint(tracker.summaryTracker.data, uint64(len(newKey)))
 				} else {
 					tracker.summaryTracker.data = binary.LittleEndian.AppendUint64(tracker.summaryTracker.data, uint64(len(newKey)))
 				}
 				tracker.summaryTracker.data = append(tracker.summaryTracker.data, newKey...)
-				if config.VariableEncoding {
+				if config.VariableHeader {
 					tracker.summaryTracker.data = binary.AppendUvarint(tracker.summaryTracker.data, uint64(*offset))
 				} else {
 					tracker.summaryTracker.data = binary.LittleEndian.AppendUint64(tracker.summaryTracker.data, uint64(*offset))

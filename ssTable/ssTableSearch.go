@@ -69,7 +69,7 @@ func searchCompact(filePath string, key []byte, prefix bool) ([]byte, uint64, er
 
 	for {
 		if blockOffset == boundIndex {
-			if !config.VariableEncoding {
+			if !config.VariableHeader {
 				blockOffset = binary.LittleEndian.Uint64(valueBytes)
 			} else {
 				blockOffset, _ = binary.Uvarint(valueBytes)
@@ -107,7 +107,7 @@ func searchCompact(filePath string, key []byte, prefix bool) ([]byte, uint64, er
 					continue
 				}
 				currentSection++
-				if !config.VariableEncoding {
+				if !config.VariableHeader {
 					blockOffset = binary.LittleEndian.Uint64(values[len(values)-1])
 				} else {
 					blockOffset, _ = binary.Uvarint(values[len(values)-1])
@@ -125,7 +125,7 @@ func searchCompact(filePath string, key []byte, prefix bool) ([]byte, uint64, er
 				return values[index], entryBlockOffset, nil
 			}
 
-			if !config.VariableEncoding {
+			if !config.VariableHeader {
 				blockOffset = binary.LittleEndian.Uint64(values[index])
 			} else {
 				blockOffset, _ = binary.Uvarint(values[index])
@@ -180,7 +180,7 @@ func searchCompact(filePath string, key []byte, prefix bool) ([]byte, uint64, er
 				if dataBlockCheck {
 					return valueBytes, entryBlockOffset, nil
 				}
-				if !config.VariableEncoding {
+				if !config.VariableHeader {
 					blockOffset = binary.LittleEndian.Uint64(valueBytes)
 				} else {
 					blockOffset, _ = binary.Uvarint(valueBytes)
@@ -204,7 +204,7 @@ func searchCompact(filePath string, key []byte, prefix bool) ([]byte, uint64, er
 				}
 				return lastValue, lastEntryOffset, nil
 			} else if compareResult < 0 && !dataBlockCheck {
-				if !config.VariableEncoding {
+				if !config.VariableHeader {
 					blockOffset = binary.LittleEndian.Uint64(valueBytes)
 				} else {
 					blockOffset, _ = binary.Uvarint(valueBytes)
@@ -438,7 +438,7 @@ func SearchOne(filePath string, key []byte, prefix bool) ([]byte, uint64) {
 		fileName = filePrefix + "-index.bin"
 		filePath = filepath.Join(dataPath, fileLevel, fileName)
 
-		if !config.VariableEncoding {
+		if !config.VariableHeader {
 			offset = binary.LittleEndian.Uint64(valueBytes)
 		} else {
 			offset, _ = binary.Uvarint(valueBytes)
@@ -451,7 +451,7 @@ func SearchOne(filePath string, key []byte, prefix bool) ([]byte, uint64) {
 		fileName = filePrefix + "-data.bin"
 		filePath = filepath.Join(dataPath, fileLevel, fileName)
 
-		if !config.VariableEncoding {
+		if !config.VariableHeader {
 			offset = binary.LittleEndian.Uint64(valueBytes)
 		} else {
 			offset, _ = binary.Uvarint(valueBytes)
@@ -491,7 +491,7 @@ func GetMaximumBound(summaryFile *os.File) ([]byte, error) {
 	keySize := uint64(0)
 	keyBytes := make([]byte, 0)
 	data := fetchData(block)
-	if !config.VariableEncoding {
+	if !config.VariableHeader {
 		keySizeBytes := data[:8]
 		keySize = binary.LittleEndian.Uint64(keySizeBytes)
 		keyBytes = append(keyBytes, data[8:min(8+keySize, uint64(len(data)))]...) // key value of the last element

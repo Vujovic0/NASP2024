@@ -58,7 +58,7 @@ func checkNotNil(t *testing.T, got interface{}, msg string) {
 // | CRC 4B | TimeStamp 8B | Tombstone 1B | Keysize 8B | Valuesize 8B | Key... | Value... |
 // KeyOnlyCheck will assure that only the key with its size is serialized
 func SerializeEntryHelper(key string, value string, tombstone bool, keyOnly bool) []byte {
-	if !config.VariableEncoding {
+	if !config.VariableHeader {
 		keyBytes := []byte(key)
 		keySize := len(keyBytes)
 		var dataBytes []byte
