@@ -4,7 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
-	"strings"
+	"math/bits"
 )
 
 type BloomFilter struct {
@@ -61,22 +61,23 @@ func AddData(bf *BloomFilter, array []string) *BloomFilter {
 	for _, data := range array {
 		if bf.numOfElem > bf.stateCheck && confirm {
 			fmt.Printf("--WARNING--\nBloom filter is probably at great risk of collisions!\nOut of %d elements you already added %d. Do you want to continue? [y/n]\nYour answer: ", len(array), bf.numOfElem-startState)
-		inputLoop:
-			for {
-				var inputKey string
-				fmt.Scan(&inputKey)
-				inputKey = strings.TrimSpace(inputKey)
-				switch strings.ToLower(inputKey) {
-				case "y":
-					confirm = false
-					break inputLoop
-				case "n":
-					return bf // Return early if the user decides not to proceed
-				default:
-					fmt.Println("Your input is invalid! Please enter 'y' or 'n'...")
-				}
-			}
 		}
+		// inputLoop:
+		// 	for {
+		// 		var inputKey string
+		// 		fmt.Scan(&inputKey)
+		// 		inputKey = strings.TrimSpace(inputKey)
+		// 		switch strings.ToLower(inputKey) {
+		// 		case "y":
+		// 			confirm = false
+		// 			break inputLoop
+		// 		case "n":
+		// 			return bf // Return early if the user decides not to proceed
+		// 		default:
+		// 			fmt.Println("Your input is invalid! Please enter 'y' or 'n'...")
+		// 		}
+		// 	}
+		// }
 		byteSlice := []byte(data)
 		for _, hfn := range bf.hash {
 			hashValue := hfn.Hash(byteSlice)
@@ -164,7 +165,22 @@ func DeserializeFromBytes(data []byte) (*BloomFilter, error) {
 
 	bf.numHashes = len(bf.hash)
 	bf.stateCheck = int(float64(bf.registerSize) / math.Log(float64(bf.numHashes)) * 0.6)
-	bf.numOfElem = 0 // reset number of added elements, we don't know exact state
+	bf.numOfElem = bf.EstimateElements()
 
 	return bf, nil
+}
+
+func (bf *BloomFilter) GetNumOfElem() int {
+	return bf.numOfElem
+}
+
+func (bf *BloomFilter) EstimateElements() int {
+	setBits := 0
+	for _, b := range bf.register {
+		setBits += bits.OnesCount8(b)
+	}
+	m := float64(bf.registerSize)
+	k := float64(bf.numHashes)
+	estimate := -m / k * math.Log(1-float64(setBits)/m)
+	return int(math.Round(estimate))
 }
