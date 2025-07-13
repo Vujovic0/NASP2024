@@ -12,6 +12,7 @@ import (
 
 	"github.com/Vujovic0/NASP2024/blockManager"
 	"github.com/Vujovic0/NASP2024/config"
+	"github.com/Vujovic0/NASP2024/probabilisticDataStructures/bloomFilter"
 )
 
 func searchCompact(filePath string, key []byte, prefix bool) ([]byte, uint64, error) {
@@ -30,14 +31,17 @@ func searchCompact(filePath string, key []byte, prefix bool) ([]byte, uint64, er
 		panic("Error: can't get file info")
 	}
 
-	var indexStart uint64
-	var summaryStart uint64
-
 	footerBlock := blockManager.ReadBlock(file, uint64(math.Ceil(float64(fileInfo.Size())/float64(blockSize))-1))
 	footerData := footerBlock.GetData()
 
-	indexStart = binary.LittleEndian.Uint64(footerData[17:25])
-	summaryStart = binary.LittleEndian.Uint64(footerData[25:33])
+	indexStart := binary.LittleEndian.Uint64(footerData[17:25])
+	summaryStart := binary.LittleEndian.Uint64(footerData[25:33])
+	filterStart := binary.LittleEndian.Uint64(footerData[9+4*8 : 9+5*8])
+
+	filter, _ := fetchFilter(file, filterStart)
+	if !bloomFilter.SearchData(filter, string(key)) {
+		return nil, 0, nil
+	}
 
 	maximumBound, err := GetMaximumBound(file)
 	if err != nil {
@@ -377,10 +381,8 @@ func searchSeparated(filePath string, key []byte, offset uint64, prefix bool) ([
 // Returns [] if the key was not found
 func SearchAll(key []byte, prefix bool) []byte {
 	dataPath := getDataPath()
-	iterator := 1
 	readOrder := GetReadOrder(dataPath)
 	for _, filePath := range readOrder {
-		iterator += 1
 		valueBytes, _ := SearchOne(filePath, key, prefix)
 		if valueBytes != nil {
 			return valueBytes
@@ -410,8 +412,22 @@ func SearchOne(filePath string, key []byte, prefix bool) ([]byte, uint64) {
 		if !found {
 			panic(fmt.Sprintf("wrong file suffix, expected data.bin or compact.bin, got %s", fileName))
 		}
-		fileName = filePrefix + "-summary.bin"
+
+		fileName = filePrefix + "-filter.bin"
 		filePath := filepath.Join(dataPath, fileLevel, fileName)
+		fileptr, err := os.OpenFile(filePath, os.O_RDONLY, 0644)
+		if err != nil {
+			panic(err)
+		}
+		defer fileptr.Close()
+
+		filter, _ := fetchFilter(fileptr, 0)
+		if !bloomFilter.SearchData(filter, string(key)) {
+			return nil, 0
+		}
+
+		fileName = filePrefix + "-summary.bin"
+		filePath = filepath.Join(dataPath, fileLevel, fileName)
 		valueBytes, _, err = searchSeparated(filePath, key, 0, prefix)
 		if err != nil {
 			panic(err)
@@ -571,4 +587,14 @@ func FindLastSmallerKey(key []byte, keys [][]byte, dataBlock bool, prefix bool) 
 		}
 	}
 	return -1
+}
+
+func getFooter(file *os.File) *blockManager.Block {
+	fileInfo, err := file.Stat()
+	if err != nil {
+		panic(err)
+	}
+	fileSize := fileInfo.Size()
+	footerBlockIndex := math.Ceil(float64(fileSize)/float64(config.GlobalBlockSize)) - 1
+	return blockManager.ReadBlock(file, uint64(footerBlockIndex))
 }
