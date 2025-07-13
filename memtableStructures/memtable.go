@@ -177,7 +177,7 @@ func (mt *MemoryTable) Search(key string) (*Element, bool) {
 		sl := mt.Data.(*SkipList)
 		value, found := sl.search(key)
 		if !found {
-			fmt.Println("Ne postoji element sa unetim kljucem!")
+			//fmt.Println("Ne postoji element sa unetim kljucem!")
 
 		} else {
 			return value, true
@@ -188,7 +188,7 @@ func (mt *MemoryTable) Search(key string) (*Element, bool) {
 		value, found := tree.search(key)
 
 		if !found {
-			fmt.Println("Ne postoji element sa unetim kljucem!")
+			//fmt.Println("Ne postoji element sa unetim kljucem!")
 		} else {
 			return value, true
 		}
@@ -198,7 +198,7 @@ func (mt *MemoryTable) Search(key string) (*Element, bool) {
 		value, found := hashMap.search(key)
 
 		if !found {
-			fmt.Println("Ne postoji element sa unetim kljucem!")
+			//fmt.Println("Ne postoji element sa unetim kljucem!")
 		} else {
 			return value, true
 		}

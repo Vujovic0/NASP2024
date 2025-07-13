@@ -247,7 +247,7 @@ func (wal *WAL) WriteLogEntryType0(logEntryBytes []byte, logSizeNeeded int) (int
 
 	if currentBlock.GetType() == 0 { // IF CURRENT BLOCK IS FILLED WITH THE END OF THE OLDER LOG
 		// PROMENI PROVERU TAKO ŠTO GLEDAŠ KOLIKO JE ZAPISANO U BLOCKU
-		if wal.blockSize-currentBlock.GetSize() >= logSizeNeeded {
+		if wal.blockSize-currentBlock.GetSize()-9 >= logSizeNeeded {
 			// WRITING IN THE SAME BLOCK
 			blockType := make([]byte, 1)
 			blockType[0] = 0

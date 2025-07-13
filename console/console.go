@@ -6,6 +6,7 @@ import (
 	"github.com/Vujovic0/NASP2024/config"
 	"github.com/Vujovic0/NASP2024/lruCache"
 	"github.com/Vujovic0/NASP2024/memtableStructures"
+	"github.com/Vujovic0/NASP2024/ssTable"
 	"github.com/Vujovic0/NASP2024/wal"
 )
 
@@ -71,7 +72,7 @@ func Start() {
 
 			Put(walFactory, memtable, lruCacheFactory)
 		case 2:
-			Get(lruCacheFactory)
+			Get(lruCacheFactory, memtable)
 		case 3:
 			Delete()
 		case 4:
@@ -95,11 +96,9 @@ func Put(walFactory *wal.WAL, mtm *memtableStructures.MemTableManager, lruCache 
 	fmt.Scan(&inputValue)
 	binInputValue := stringToBin(inputValue)
 	fmt.Println(binInputValue) // Writing the binary form, just for the sakes of not giving error
-	// MISSING THE APPROVE FROM WAL, DATA NEED TO BE SEND TO THE WAL WERE IT WILL BE STORED TILL DISMISED TO THE DISK
 	if walFactory == nil {
 		fmt.Println("WAL nije uspešno inicijalizovan")
 	}
-	// ADDENTRY RETURN TRUE IF WAL WAS WRITTEN
 	offset, err := (*walFactory).WriteLogEntry(inputKey, inputValue)
 	if err == nil {
 		mtm.Insert(inputKey, []byte(inputValue), walFactory.CurrentFile.Name(), walFactory.CurrentBlock, offset)
@@ -112,19 +111,36 @@ func Put(walFactory *wal.WAL, mtm *memtableStructures.MemTableManager, lruCache 
 	return inputKey, inputValue
 }
 
-func Get(lruCache *lruCache.LRUCache) string {
+func Get(lruCache *lruCache.LRUCache, memtableMenager *memtableStructures.MemTableManager) string {
 	fmt.Println("Enter the key:")
 	var inputKey string
 	fmt.Scan(&inputKey)
 	value, found := lruCache.Get(inputKey)
 	if found {
 		fmt.Println("Found value {" + value + "} for input key {" + inputKey + "}")
-	} else {
-		// NAĐI KEY U SSTABLE
+		fmt.Println("Value founded in LRU Cache")
+		lruCache.Put(inputKey, value)
+		return value
+	}
+	element, found := memtableMenager.Search(inputKey)
+	if found {
+		fmt.Println("Found value {" + string(element.Value) + "} for input key {" + inputKey + "}")
+		fmt.Println("Value founded in Memtable")
+		lruCache.Put(inputKey, string(element.Value))
+		return string(element.Value)
+	}
+	valueBytes := ssTable.SearchAll([]byte(inputKey), false)
+	if len(valueBytes) > 0 {
+		value = string(valueBytes)
+		fmt.Println("Found value {" + value + "} forinput key {" + inputKey + "}")
+		fmt.Println("Value founded in SS Table")
+		lruCache.Put(inputKey, value)
+		return value
 	}
 	// HERE WE NEED TO IMPLEMENT GETTING THE VALUE (for now only to write it on wal)
 	// MISSING THE APPROVE FROM WAL, DATA NEED TO BE SEND TO THE WAL WERE IT WILL BE STORED TILL DISMISED TO THE DISK
-	return value
+	fmt.Println("There is no value for input key {" + inputKey + "}")
+	return ""
 }
 
 func Delete() {
