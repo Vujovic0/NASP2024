@@ -21,10 +21,13 @@ type Config struct {
 }
 
 type MemoryTable struct {
-	Data        interface{} // Moze biti SkipList, BTree ili HashMap
-	MaxSize     uint64
-	Structure   string // Moze biti "btree","skiplist" ili "hashMap"
-	CurrentSize int
+	Data           interface{} // Moze biti SkipList, BTree ili HashMap
+	MaxSize        uint64
+	Structure      string // Moze biti "btree","skiplist" ili "hashMap"
+	CurrentSize    int
+	WALLastSegment string // NAME OF THE LAST WAL USED FOR THIS TABLE, NEEDED FOR THE WAL LOADING
+	WALBlockOffset int    // BLOCK INDEX IN SEGMENT
+	WALByteOffset  int    // BYTE OFFSET, NEEDED ONLY FOR BLOCK WHICH TYPE != 0
 }
 
 type Element struct {
@@ -52,9 +55,8 @@ func loadConfig() Config {
 }
 
 func initializeMemoryTable() *MemoryTable {
-	config := loadConfig()
-	// var config Config
-	configData, err := os.ReadFile("config.json")
+	var config Config
+	configData, err := os.ReadFile("./memtableStructures/config.json")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -129,12 +131,12 @@ func initializeHashMapMemtable(config *Config) *MemoryTable {
 	return memTable
 }
 
-func (mt *MemoryTable) Insert(key string, value []byte) {
+func (mt *MemoryTable) Insert(key string, value []byte, tombstone bool) {
 	element := Element{
 		Key:       key,
 		Value:     value,
 		Timestamp: time.Now().Unix(),
-		Tombstone: false,
+		Tombstone: tombstone,
 	}
 
 	fmt.Printf("Inserting element: Key=%s, Value=%s\n", key, value)
@@ -175,7 +177,7 @@ func (mt *MemoryTable) Search(key string) (*Element, bool) {
 		sl := mt.Data.(*SkipList)
 		value, found := sl.search(key)
 		if !found {
-			fmt.Println("Ne postoji element sa unetim kljucem!")
+			//fmt.Println("Ne postoji element sa unetim kljucem!")
 
 		} else {
 			return value, true
@@ -186,7 +188,7 @@ func (mt *MemoryTable) Search(key string) (*Element, bool) {
 		value, found := tree.search(key)
 
 		if !found {
-			fmt.Println("Ne postoji element sa unetim kljucem!")
+			//fmt.Println("Ne postoji element sa unetim kljucem!")
 		} else {
 			return value, true
 		}
@@ -196,7 +198,7 @@ func (mt *MemoryTable) Search(key string) (*Element, bool) {
 		value, found := hashMap.search(key)
 
 		if !found {
-			fmt.Println("Ne postoji element sa unetim kljucem!")
+			//fmt.Println("Ne postoji element sa unetim kljucem!")
 		} else {
 			return value, true
 		}
@@ -390,7 +392,7 @@ func elementToBytes(element *Element) []byte {
 	tmp := make([]byte, binary.MaxVarintLen64)
 
 	// 1. Timestamp
-	if config.VariableEncoding {
+	if config.VariableHeader {
 		n := binary.PutVarint(tmp, element.Timestamp)
 		buffer.Write(tmp[:n])
 	} else {
@@ -407,7 +409,7 @@ func elementToBytes(element *Element) []byte {
 	}
 
 	// 3. Duzina kljuca
-	if config.VariableEncoding {
+	if config.VariableHeader {
 		n := binary.PutUvarint(tmp, uint64(len(element.Key)))
 		buffer.Write(tmp[:n])
 	} else {
@@ -418,7 +420,7 @@ func elementToBytes(element *Element) []byte {
 
 	// 4. Ako element nije tombstone, upisujemo duzinu vrednosti
 	if !element.Tombstone {
-		if config.VariableEncoding {
+		if config.VariableHeader {
 			n := binary.PutUvarint(tmp, uint64(len(element.Value)))
 			buffer.Write(tmp[:n])
 		} else {
@@ -444,7 +446,7 @@ func bytesToElement(data []byte) *Element {
 
 	// 1. Timestamp
 	var timestamp int64
-	if config.VariableEncoding {
+	if config.VariableHeader {
 		timestamp, _ = binary.ReadVarint(buffer)
 	} else {
 		timestampBytes := make([]byte, 8)
@@ -458,7 +460,7 @@ func bytesToElement(data []byte) *Element {
 
 	// 3. Duzina kljuca
 	var keyLen uint64
-	if config.VariableEncoding {
+	if config.VariableHeader {
 		keyLen, _ = binary.ReadUvarint(buffer)
 	} else {
 		keyLenBytes := make([]byte, 8)
@@ -469,7 +471,7 @@ func bytesToElement(data []byte) *Element {
 	// 4. Valuesize (samo ako nije tombstone)
 	var valueLen uint64
 	if !tombstone {
-		if config.VariableEncoding {
+		if config.VariableHeader {
 			valueLen, _ = binary.ReadUvarint(buffer)
 		} else {
 			valueLenBytes := make([]byte, 8)

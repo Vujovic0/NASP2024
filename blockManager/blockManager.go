@@ -1,9 +1,10 @@
 package blockManager
 
 import (
-	"github.com/Vujovic0/NASP2024/config"
 	"io"
 	"os"
+
+	"github.com/Vujovic0/NASP2024/config"
 )
 
 const (

@@ -27,7 +27,7 @@ func elementToBytes(element *Element) []byte {
 	tmp := make([]byte, binary.MaxVarintLen64)
 
 	// 1. Timestamp
-	if config.VariableEncoding {
+	if config.VariableHeader {
 		n := binary.PutVarint(tmp, element.Timestamp)
 		buffer.Write(tmp[:n])
 	} else {
@@ -41,7 +41,7 @@ func elementToBytes(element *Element) []byte {
 		buffer.WriteByte(0)
 	}
 
-	if config.VariableEncoding {
+	if config.VariableHeader {
 		// 3. Duzina kljuca
 		tmp := make([]byte, binary.MaxVarintLen64)
 		n := binary.PutUvarint(tmp, uint64(len(element.Key)))

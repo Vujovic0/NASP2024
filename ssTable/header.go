@@ -1,8 +1,9 @@
 package ssTable
 
 import (
-	"github.com/Vujovic0/NASP2024/config"
 	"encoding/binary"
+
+	"github.com/Vujovic0/NASP2024/config"
 )
 
 // Header represent the number of bytes each header field takes up
@@ -24,7 +25,7 @@ func InitHeader(array []byte, dataBlock bool) *Header {
 	header := new(Header)
 	header.dataBlock = dataBlock
 	headerPointer := 0
-	if config.VariableEncoding {
+	if config.VariableHeader {
 
 		if dataBlock {
 			header.crcBytes = 4
@@ -79,7 +80,7 @@ func InitHeader(array []byte, dataBlock bool) *Header {
 func GetTimeStamp(dataPointer uint64, data []byte, header *Header) uint64 {
 	offsetStart := dataPointer + uint64(header.crcBytes)
 	offsetEnd := offsetStart + uint64(header.timeStampBytes)
-	if !config.VariableEncoding {
+	if !config.VariableHeader {
 		return binary.LittleEndian.Uint64(data[offsetStart:offsetEnd])
 	} else {
 		timestamp, _ := getUvarint(data[offsetStart:], "timestamp")
@@ -105,7 +106,7 @@ func GetTombstone(dataPointer uint64, data []byte, header *Header) bool {
 func GetKeySize(dataPointer uint64, data []byte, header *Header) uint64 {
 	offsetStart := dataPointer + uint64(header.crcBytes) + uint64(header.timeStampBytes) + uint64(header.tombstoneBytes)
 	offsetEnd := offsetStart + uint64(header.keySizeBytes)
-	if !config.VariableEncoding {
+	if !config.VariableHeader {
 		return binary.LittleEndian.Uint64(data[offsetStart:offsetEnd])
 	} else {
 		keysize, _ := getUvarint(data[offsetStart:], "key size")
@@ -121,7 +122,7 @@ func GetValueSize(dataPointer uint64, data []byte, header *Header, maxEntry bool
 	}
 	offsetStart := dataPointer + uint64(header.crcBytes) + uint64(header.timeStampBytes) + uint64(header.tombstoneBytes) + uint64(header.keySizeBytes)
 
-	if !config.VariableEncoding {
+	if !config.VariableHeader {
 		if !header.dataBlock {
 			return 8
 		}
