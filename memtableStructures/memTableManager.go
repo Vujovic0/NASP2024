@@ -9,6 +9,7 @@ import (
 
 	"github.com/Vujovic0/NASP2024/blockManager"
 	"github.com/Vujovic0/NASP2024/config"
+	"github.com/Vujovic0/NASP2024/probabilisticDataStructures/bloomFilter"
 	"github.com/Vujovic0/NASP2024/ssTable"
 )
 
@@ -416,6 +417,15 @@ func userSearchMenu(mtm *MemTableManager) {
 	}
 }
 
+func elementToSSTableElement(elem Element) *ssTable.Element {
+	return &ssTable.Element{
+		Key:       elem.Key,
+		Value:     elem.Value,
+		Timestamp: elem.Timestamp,
+		Tombstone: elem.Tombstone,
+	}
+}
+
 // Nova funkcija za flush jedne memtable
 func (mtm *MemTableManager) FlushMemTableToSSTable(memTable *MemoryTable, tableIndex int) {
 	fmt.Printf("Flushujemo MemTable_%d na disk...\n", tableIndex)
@@ -430,6 +440,24 @@ func (mtm *MemTableManager) FlushMemTableToSSTable(memTable *MemoryTable, tableI
 		lastElem := elements[len(elements)-1]
 		lastEntry := ssTable.InitEntry(0, false, uint64(lastElem.Timestamp), []byte(lastElem.Key), []byte{})
 		lastElementData := ssTable.SerializeEntry(lastEntry, true)
+
+		// Kreiramo bloom filter
+		filter := bloomFilter.MakeBloomFilter(len(elements), 0.01) // 1% false positive rate
+		keys := make([]string, len(elements))
+		for i, elem := range elements {
+			keys[i] = elem.Key
+		}
+		bloomFilter.AddData(filter, keys)
+
+		// Kreiramo slice pokazivaca na ssTable.Element
+		ssElements := make([]*ssTable.Element, len(elements))
+		for i := range elements {
+			ssElements[i] = elementToSSTableElement(elements[i])
+		}
+
+		// 3. Kreiramo Merkle tree
+		merkleTree := ssTable.NewMerkleTree(ssElements)
+
 		// 3. Koristi vrednosti iz konfiguracije
 		if !config.SeparateFiles {
 			ssTable.CreateCompactSSTable(
@@ -437,6 +465,8 @@ func (mtm *MemTableManager) FlushMemTableToSSTable(memTable *MemoryTable, tableI
 				lastElementData,
 				int(config.SummarySparsity),
 				int(config.IndexSparsity),
+				filter,
+				merkleTree,
 			)
 			fmt.Printf(" SSTable_%d kreiran (COMPACT format) sa %d elemenata\n", tableIndex, len(elements))
 		} else {
@@ -445,6 +475,8 @@ func (mtm *MemTableManager) FlushMemTableToSSTable(memTable *MemoryTable, tableI
 				lastElementData,
 				int(config.SummarySparsity),
 				int(config.IndexSparsity),
+				filter,
+				merkleTree,
 			)
 			fmt.Printf(" SSTable_%d kreiran (SEPARATED format) sa %d elemenata\n", tableIndex, len(elements))
 		}
@@ -603,7 +635,7 @@ func SaveOffsetData(WALLastSegment string, WALBlockOffset int, WALByteOffset int
 	file.Close()
 }
 
-/*func main() {
+func main() {
 	mtm := NewMemTableManager(2)
 
 	fmt.Println(" TESTIRANJE FLUSH MEHANIZMA ")
@@ -617,11 +649,10 @@ func SaveOffsetData(WALLastSegment string, WALBlockOffset int, WALByteOffset int
 
 	for i, key := range testData {
 		value := fmt.Sprintf("value_%d", i+1)
-		mtm.Insert(key, []byte(value))
+		mtm.Insert(key, []byte(value), false, "", 0, 0)
 		fmt.Printf("Insertovan: %s -> %s\n", key, value)
 	}
 
 	// userScanMenu(mtm)
 	userSearchMenu(mtm)
 }
-*/

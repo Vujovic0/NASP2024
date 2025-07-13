@@ -57,6 +57,8 @@ func loadConfig() Config {
 func initializeMemoryTable() *MemoryTable {
 	var config Config
 	configData, err := os.ReadFile("./memtableStructures/config.json")
+	// configData, err := os.ReadFile("config.json")
+
 	if err != nil {
 		log.Fatal(err)
 	}
