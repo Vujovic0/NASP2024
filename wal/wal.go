@@ -157,7 +157,7 @@ func (wal *WAL) DeserializeOffsetFile() (string, uint32, uint64) {
 
 }
 
-func NewLogEntry(key string, value string) *LogEntry {
+func NewLogEntry(key string, value string, tombstone bool) *LogEntry {
 	logEntry := new(LogEntry)
 	logEntry.Key = key
 	logEntry.Value = value
@@ -166,8 +166,8 @@ func NewLogEntry(key string, value string) *LogEntry {
 	return logEntry
 }
 
-func (wal *WAL) WriteLogEntry(key string, value string) (int, error) {
-	log := NewLogEntry(key, value)
+func (wal *WAL) WriteLogEntry(key string, value string, tombstone bool) (int, error) {
+	log := NewLogEntry(key, value, tombstone)
 	logEntryBytes := log.SerializeLogEntry()
 	logSizeNeeded := log.GetSerializedLogSize()
 	var offset int
@@ -247,7 +247,7 @@ func (wal *WAL) WriteLogEntryType0(logEntryBytes []byte, logSizeNeeded int) (int
 
 	if currentBlock.GetType() == 0 { // IF CURRENT BLOCK IS FILLED WITH THE END OF THE OLDER LOG
 		// PROMENI PROVERU TAKO ŠTO GLEDAŠ KOLIKO JE ZAPISANO U BLOCKU
-		if wal.blockSize-currentBlock.GetSize() >= logSizeNeeded {
+		if wal.blockSize-currentBlock.GetSize()-9 >= logSizeNeeded {
 			// WRITING IN THE SAME BLOCK
 			blockType := make([]byte, 1)
 			blockType[0] = 0
