@@ -575,7 +575,7 @@ func serializeEntryCompressed(entry *Entry, bound bool) []byte {
 	serializedData = binary.AppendUvarint(serializedData, uint64(len(entry.value)))
 	serializedData = append(serializedData, entry.key...)
 	serializedData = append(serializedData, entry.value...)
-
+	binary.LittleEndian.PutUint32(serializedData[0:4], crc32.ChecksumIEEE(serializedData[4:]))
 	return serializedData
 }
 
@@ -597,6 +597,7 @@ func serializeEntryNonCompressed(entry *Entry, bound bool) []byte {
 	serializedData = binary.LittleEndian.AppendUint64(serializedData, uint64(len(entry.value)))
 	serializedData = append(serializedData, entry.key...)
 	serializedData = append(serializedData, entry.value...)
+	binary.LittleEndian.PutUint32(serializedData[0:4], crc32.ChecksumIEEE(serializedData[4:]))
 	return serializedData
 }
 
