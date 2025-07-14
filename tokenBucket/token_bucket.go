@@ -1,18 +1,19 @@
-package main
+package tokenBucket
 
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"time"
+
+	"github.com/Vujovic0/NASP2024/config"
 )
 
 // Config represents the configuration structure for the token bucket.
-type Config struct {
-	Capacity     int           `json:"capacity"`
-	TimeInterval time.Duration `json:"timeInterval"`
-}
+// type Config struct {
+// 	Capacity     int           `json:"capacity"`
+// 	TimeInterval time.Duration `json:"timeInterval"`
+// }
 
 type TokenBucket struct {
 	capacity       int
@@ -30,39 +31,48 @@ func NewTokenBucket(capacity int, timeInterval time.Duration) *TokenBucket {
 	}
 }
 
+// func initializeTokenBucket() *TokenBucket {
+// 	// Podrazumevane vrednosti ukoliko nema konfiguracije
+// 	defaultCapacity := 10
+// 	defaultInterval := 5000 * time.Millisecond
+
+// 	// Postavljamo podrazumevane vrednosti
+// 	config := Config{
+// 		Capacity:     defaultCapacity,
+// 		TimeInterval: defaultInterval,
+// 	}
+
+// 	// var config Config
+// 	configData, err := os.ReadFile("config tokenBucket.json")
+// 	if err != nil {
+// 		log.Fatal(err)
+// 	}
+
+// 	err = json.Unmarshal(configData, &config)
+// 	if err != nil {
+// 		fmt.Println("Konfiguracioni fajl nije pronadjen, koriste se podrazumevane vrednosti.")
+// 	}
+// 	// fmt.Println(config)
+
+// 	// Provera validnosti konfiguracije
+// 	if config.Capacity <= 0 {
+// 		config.Capacity = defaultCapacity
+// 	}
+// 	if config.TimeInterval <= 0 {
+// 		config.TimeInterval = defaultInterval
+// 	}
+
+// 	tokenBucket := NewTokenBucket(config.Capacity, config.TimeInterval)
+
+// 	return tokenBucket
+// }
+
 func initializeTokenBucket() *TokenBucket {
-	// Podrazumevane vrednosti ukoliko nema konfiguracije
-	defaultCapacity := 10
-	defaultInterval := 5000 * time.Millisecond
+	// Učitaj konfiguraciju iz globalnog config-a
+	capacity := config.TokensNum
+	interval := time.Duration(config.ResetingIntervalMs) * time.Millisecond
 
-	// Postavljamo podrazumevane vrednosti
-	config := Config{
-		Capacity:     defaultCapacity,
-		TimeInterval: defaultInterval,
-	}
-
-	// var config Config
-	configData, err := os.ReadFile("config tokenBucket.json")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	err = json.Unmarshal(configData, &config)
-	if err != nil {
-		fmt.Println("Konfiguracioni fajl nije pronadjen, koriste se podrazumevane vrednosti.")
-	}
-	// fmt.Println(config)
-
-	// Provera validnosti konfiguracije
-	if config.Capacity <= 0 {
-		config.Capacity = defaultCapacity
-	}
-	if config.TimeInterval <= 0 {
-		config.TimeInterval = defaultInterval
-	}
-
-	tokenBucket := NewTokenBucket(config.Capacity, config.TimeInterval)
-
+	tokenBucket := NewTokenBucket(capacity, interval)
 	return tokenBucket
 }
 
@@ -192,36 +202,40 @@ func userConfig(defaultCapacity int, defaultInterval time.Duration) (int, time.D
 	}
 }
 
-func main() {
+// func main() {
+// 	_, err := config.LoadConfig()
+// 	if err != nil {
+// 		fmt.Println("Greska pri ucitavanju konfiguracije:", err)
+// 	}
 
-	tokenBucket := initializeTokenBucket()
-	fmt.Println(tokenBucket)
+// 	tokenBucket := initializeTokenBucket()
+// 	fmt.Println(tokenBucket)
 
-	capacity, interval := userConfig(tokenBucket.capacity, tokenBucket.timeInterval)
-	tokenBucket = NewTokenBucket(capacity, interval)
+// 	capacity, interval := userConfig(tokenBucket.capacity, tokenBucket.timeInterval)
+// 	tokenBucket = NewTokenBucket(capacity, interval)
 
-	// Load state from file
-	err := tokenBucket.LoadState("token_bucket_state.json")
-	if err != nil {
-		fmt.Println("No previous state found, starting fresh.")
-	}
+// 	// Load state from file
+// 	err = tokenBucket.LoadState("token_bucket_state.json")
+// 	if err != nil {
+// 		fmt.Println("No previous state found, starting fresh.")
+// 	}
 
-	// Start token refill
-	tokenBucket.StartRefill()
+// 	// Start token refill
+// 	// tokenBucket.StartRefill()
 
-	// Simulate token consumption
-	for i := 0; i < 7; i++ {
-		if tokenBucket.Consume() {
-			// fmt.Println("Token consumed!")
-		} else {
-			// fmt.Println("No tokens available.")
-		}
-		time.Sleep(1 * time.Second)
-	}
+// 	// Simulate token consumption
+// 	for i := 0; i < 7; i++ {
+// 		if tokenBucket.Consume() {
+// 			// fmt.Println("Token consumed!")
+// 		} else {
+// 			// fmt.Println("No tokens available.")
+// 		}
+// 		time.Sleep(1 * time.Second)
+// 	}
 
-	err = tokenBucket.SaveState("token_bucket_state.json")
-	if err != nil {
-		fmt.Println("Error saving state:", err)
-	}
+// 	err = tokenBucket.SaveState("token_bucket_state.json")
+// 	if err != nil {
+// 		fmt.Println("Error saving state:", err)
+// 	}
 
-}
+// }
