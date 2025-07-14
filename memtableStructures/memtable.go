@@ -1,24 +1,22 @@
-package memtableStructures
+package main
 
 import (
 	"bytes"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"hash/crc32"
 	"log"
-	"os"
 	"sort"
 	"time"
 
 	"github.com/Vujovic0/NASP2024/config"
 )
 
-type Config struct {
-	WalSize           uint64 `json:"wal_size"`
-	MemtableSize      uint64 `json:"memtable_size"`
-	MemtableStructure string `json:"memtable_structure"`
-}
+// type Config struct {
+// 	WalSize           uint64 `json:"wal_size"`
+// 	MemtableSize      uint64 `json:"memtable_size"`
+// 	MemtableStructure string `json:"memtable_structure"`
+// }
 
 type MemoryTable struct {
 	Data           interface{} // Moze biti SkipList, BTree ili HashMap
@@ -37,48 +35,48 @@ type Element struct {
 	Tombstone bool
 }
 
-func loadConfig() Config {
-	// Postavi default vrednosti
-	config := Config{
-		WalSize:           10,
-		MemtableSize:      10,
-		MemtableStructure: "hashMap",
-	}
+// func loadConfig() Config {
+// 	// Postavi default vrednosti
+// 	config := Config{
+// 		WalSize:           10,
+// 		MemtableSize:      10,
+// 		MemtableStructure: "hashMap",
+// 	}
 
-	// Pokusavamo da ucitamo konfiguraciju iz fajla
-	configData, err := os.ReadFile("config.json")
-	if err == nil {
-		json.Unmarshal(configData, &config)
-		// Ako neko polje nedostaje u fajlu, ostaje default iz koda!
-	}
-	return config
-}
+// 	// Pokusavamo da ucitamo konfiguraciju iz fajla
+// 	configData, err := os.ReadFile("config.json")
+// 	if err == nil {
+// 		json.Unmarshal(configData, &config)
+// 		// Ako neko polje nedostaje u fajlu, ostaje default iz koda!
+// 	}
+// 	return config
+// }
 
 func initializeMemoryTable() *MemoryTable {
-	var config Config
-	configData, err := os.ReadFile("./memtableStructures/config.json")
-	// configData, err := os.ReadFile("config.json")
+	// var config Config
+	// configData, err := os.ReadFile("./memtableStructures/config.json")
+	// // configData, err := os.ReadFile("config.json")
 
-	if err != nil {
-		log.Fatal(err)
-	}
-	err = json.Unmarshal(configData, &config)
-	if err != nil {
-		log.Fatal("Error parsing config: ", err)
-	}
-	fmt.Println(config)
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
+	// err = json.Unmarshal(configData, &config)
+	// if err != nil {
+	// 	log.Fatal("Error parsing config: ", err)
+	// }
+	// fmt.Println(config)
 
 	var memTable *MemoryTable
 
-	switch config.MemtableStructure {
+	switch config.ImplementationType {
 	case "btree":
-		memTable = initializeBTreeMemTable(&config)
+		memTable = initializeBTreeMemTable()
 	case "skiplist":
-		memTable = initializeSkipListMemTable(&config)
+		memTable = initializeSkipListMemTable()
 	case "hashMap":
-		memTable = initializeHashMapMemtable(&config)
+		memTable = initializeHashMapMemtable()
 	default:
-		log.Fatal("Nepoznata struktura memtable: ", config.MemtableStructure)
+		log.Fatal("Nepoznata struktura memtable: ", config.ImplementationType)
 	}
 
 	return memTable
@@ -91,44 +89,44 @@ type Memtable interface {
 	Delete(key string)
 }
 
-func initializeSkipListMemTable(config *Config) *MemoryTable {
+func initializeSkipListMemTable() *MemoryTable {
 	// Kreiranje SkipList-e
 	skipList := newSkipList(16) // Primer maksimalne visine
 	memTable := &MemoryTable{
 		Data:        skipList,
-		MaxSize:     config.MemtableSize,
-		Structure:   config.MemtableStructure,
+		MaxSize:     uint64(config.SingleTableSize),
+		Structure:   config.ImplementationType,
 		CurrentSize: 0,
 	}
-	fmt.Println("Memtable initialized with config: ", config)
+	fmt.Println("Memtable initialized with config: ", config.ImplementationType, config.SingleTableSize)
 
 	return memTable
 }
 
-func initializeBTreeMemTable(config *Config) *MemoryTable {
+func initializeBTreeMemTable() *MemoryTable {
 	// Kreiranje BTree-a
 	BTree := newBTree(16)
 	memTable := &MemoryTable{
 		Data:        BTree,
-		MaxSize:     config.MemtableSize,
-		Structure:   config.MemtableStructure,
+		MaxSize:     uint64(config.SingleTableSize),
+		Structure:   config.ImplementationType,
 		CurrentSize: 0,
 	}
-	fmt.Println("Memtable initialized with config: ", config)
+	fmt.Println("Memtable initialized with config: ", config.ImplementationType, config.SingleTableSize)
 
 	return memTable
 }
 
-func initializeHashMapMemtable(config *Config) *MemoryTable {
+func initializeHashMapMemtable() *MemoryTable {
 	// Kreiranje HashMape
 	hashMap := newHashMap(16)
 	memTable := &MemoryTable{
 		Data:        hashMap,
-		MaxSize:     config.MemtableSize,
-		Structure:   config.MemtableStructure,
+		MaxSize:     uint64(config.SingleTableSize),
+		Structure:   config.ImplementationType,
 		CurrentSize: 0,
 	}
-	fmt.Println("Memtable initialized with config: ", config)
+	fmt.Println("Memtable initialized with config: ", config.ImplementationType, config.SingleTableSize)
 
 	return memTable
 }
