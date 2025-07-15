@@ -2,6 +2,7 @@ package console
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/Vujovic0/NASP2024/config"
 	"github.com/Vujovic0/NASP2024/lruCache"
@@ -9,6 +10,22 @@ import (
 	"github.com/Vujovic0/NASP2024/ssTable"
 	"github.com/Vujovic0/NASP2024/wal"
 )
+
+func hasProbabilisticPrefix(inputKey string) bool {
+	if strings.HasPrefix(inputKey, config.BloomFilterPrefix) {
+		return true
+	}
+	if strings.HasPrefix(inputKey, config.CountMinSketchPrefix) {
+		return true
+	}
+	if strings.HasPrefix(inputKey, config.HyperLogLogPrefix) {
+		return true
+	}
+	if strings.HasPrefix(inputKey, config.SimHashPrefix) {
+		return true
+	}
+	return false
+}
 
 func Start() {
 
@@ -94,6 +111,14 @@ func Put(walFactory *wal.WAL, mtm *memtableStructures.MemTableManager, lruCache 
 	fmt.Println("Enter the value: ")
 	var inputValue string
 	fmt.Scan(&inputValue)
+	if hasProbabilisticPrefix(inputKey) {
+		fmt.Println("You entered a key with reserved prefix!")
+		fmt.Println("bf_ - BloomFilter")
+		fmt.Println("cms_ - CountMinSketch")
+		fmt.Println("hpp_ - HyperLogLog")
+		fmt.Println("sm_ - SimHash")
+		return "", ""
+	}
 	binInputValue := stringToBin(inputValue)
 	fmt.Println(binInputValue) // Writing the binary form, just for the sakes of not giving error
 	if walFactory == nil {

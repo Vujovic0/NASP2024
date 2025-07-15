@@ -9,6 +9,12 @@ import (
 	"strings"
 )
 
+// PREFIXES FOR PROBABILISTIC STRUCTURES
+var BloomFilterPrefix string = "bf_"
+var CountMinSketchPrefix string = "cms_"
+var HyperLogLogPrefix string = "hpp_"
+var SimHashPrefix string = "sh_"
+
 // WAL
 var BlocksInSegment int = 5
 
