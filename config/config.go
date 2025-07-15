@@ -23,7 +23,6 @@ var IndexSparsity int = 5
 var SeparateFiles bool = false
 var Compression bool = false
 var VariableHeader bool = false
-var VariableHeader bool = false
 
 // LSM TREE
 var MaxLevels int = 5
