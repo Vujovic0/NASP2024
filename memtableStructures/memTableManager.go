@@ -1,4 +1,4 @@
-package main
+package memtableStructures
 
 import (
 	"encoding/binary"

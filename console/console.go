@@ -157,6 +157,7 @@ func Delete(walFactory *wal.WAL, mtm *memtableStructures.MemTableManager, lruCac
 	} else {
 		fmt.Println("Neuspesno unet WAL")
 	}
+	lruCache.Remove(inputKey)
 	fmt.Println("Log with key {" + inputKey + "} is deleted.")
 }
 

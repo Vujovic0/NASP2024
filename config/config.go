@@ -3,7 +3,10 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
+	"strings"
 )
 
 // WAL
@@ -19,6 +22,7 @@ var SummarySparsity int = 5
 var IndexSparsity int = 5
 var SeparateFiles bool = false
 var Compression bool = false
+var VariableHeader bool = false
 var VariableHeader bool = false
 
 // LSM TREE
@@ -59,11 +63,11 @@ type memtableConfig struct {
 }
 
 type sSTableConfig struct {
-	SummarySparsity  int  `json:"summary_sparsity"`
-	IndexSparsity    int  `json:"index_sparsity"`
-	SeparateFiles    bool `json:"separate_files"`
-	Compression      bool `json:"compression"`
-	VariableEncoding bool `json:"variable_encoding"`
+	SummarySparsity int  `json:"summary_sparsity"`
+	IndexSparsity   int  `json:"index_sparsity"`
+	SeparateFiles   bool `json:"separate_files"`
+	Compression     bool `json:"compression"`
+	VariableHeader  bool `json:"variable_header"`
 }
 
 type lSMTreeConfig struct {
@@ -85,43 +89,212 @@ type tokenBucketConfig struct {
 	ResetingIntervalMs int `json:"interval_of_reseting_in_ms"`
 }
 
+func SaveConfig(config *Config) error {
+	filepath := "./config/previous_config.json"
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	err = os.WriteFile(filepath, data, 0644)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func LoadConfig() (*Config, error) {
 	changableJson := "./configuration.json"
 	changableData, err := os.ReadFile(changableJson)
+	loadingError := false
 	if err != nil {
-		return nil, err
+		loadingError = true
 	}
 
 	var newConfig Config
 	err = json.Unmarshal(changableData, &newConfig)
 	if err != nil {
-		fmt.Println("Error has occured while loading configuration!")
-		fmt.Println("Previous config loading...")
-		previousConfig, err := LoadPreviousConfig()
-		if err != nil {
-			//
-		}
-		SetConfigValues(previousConfig)
-		return previousConfig, nil
+		loadingError = true
 	}
 
+	if loadingError {
+		fmt.Println("Error has occured while loading configuration!")
+		fmt.Println(err)
+		for {
+			fmt.Println("Do you want to load previous configuration? (y/n)")
+			var input string
+			_, _ = fmt.Scan(&input)
+			input = strings.TrimSpace(input)
+			if input == "y" {
+				previousConfig := LoadPreviousConfig()
+				SetConfigValues(previousConfig)
+				return previousConfig, nil
+			}
+			if input == "n" {
+				fmt.Println("Stopping the program.")
+				os.Exit(0)
+				break
+			}
+			fmt.Println("You need to input valid option! (y/n)")
+		}
+	}
+	// DODAJ DA SE UPOREĐUJE STARI I NOVI CONFIG
+	comparePreviousToNewConfig(&newConfig)
 	SetConfigValues(&newConfig)
-
+	SaveConfig(&newConfig)
 	return &newConfig, nil
 }
 
-func LoadPreviousConfig() (*Config, error) {
+func comparePreviousToNewConfig(newConfig *Config) {
 	previousJson := "./config/previous_config.json"
 	previousData, err := os.ReadFile(previousJson)
+	loadingError := false
 	if err != nil {
-		return nil, err
+		loadingError = true
 	}
 	var previousConfig Config
 	err = json.Unmarshal(previousData, &previousConfig)
 	if err != nil {
-		return nil, err
+		loadingError = true
 	}
-	return &previousConfig, nil
+	if loadingError {
+		fmt.Println("Error has occured while loading previous configuration!")
+		fmt.Println("Because of potential change of block size")
+		fmt.Println("all old data needs to be deleted.")
+		for {
+			fmt.Println("Do you want to continue? (y/n)")
+			var input string
+			_, _ = fmt.Scan(&input)
+			input = strings.TrimSpace(input)
+			if input == "y" {
+				err := DeleteOldData()
+				if err != nil {
+					fmt.Println("Stopping the program.")
+					os.Exit(0)
+				}
+				break
+			}
+			if input == "n" {
+				fmt.Println("Stopping the program.")
+				os.Exit(0)
+				break
+			}
+			fmt.Println("You need to input valid option! (y/n)")
+		}
+	}
+	blockSize := newConfig.BlockManagerCache.BlockSizeB != previousConfig.BlockManagerCache.BlockSizeB
+	variableHeader := newConfig.SSTable.VariableHeader != previousConfig.SSTable.VariableHeader
+	if !blockSize || !variableHeader {
+		fmt.Println("There is change in data writing parameter!")
+		fmt.Println("(Block size or variable header setting...)")
+		fmt.Println("All the old data needs to be deleted to continue.")
+		fmt.Println("all old data needs to be deleted.")
+		for {
+			fmt.Println("Do you want to continue? (y/n)")
+			var input string
+			_, _ = fmt.Scan(&input)
+			input = strings.TrimSpace(input)
+			if input == "y" {
+				err := DeleteOldData()
+				if err != nil {
+					fmt.Println("Stopping the program.")
+					os.Exit(0)
+				}
+				break
+			}
+			if input == "n" {
+				fmt.Println("Stopping the program.")
+				os.Exit(0)
+				break
+			}
+			fmt.Println("You need to input valid option! (y/n)")
+		}
+	}
+}
+
+func LoadPreviousConfig() *Config {
+	previousJson := "./config/previous_config.json"
+	previousData, err := os.ReadFile(previousJson)
+	loadingError := false
+	if err != nil {
+		loadingError = true
+	}
+	var previousConfig Config
+	err = json.Unmarshal(previousData, &previousConfig)
+	if err != nil {
+		loadingError = true
+	}
+	if loadingError {
+		fmt.Println("Error has occured while loading previous configuration!")
+		for {
+			fmt.Println("Do you want to load default configuration? (y/n)")
+			fmt.Println("This will result in deletion of old data,")
+			fmt.Println("because of potential change of block size.")
+			var input string
+			_, _ = fmt.Scan(&input)
+			input = strings.TrimSpace(input)
+			if input == "y" {
+				err := DeleteOldData()
+				if err != nil {
+					fmt.Println("Stopping the program.")
+					os.Exit(0)
+				}
+				break
+			}
+			if input == "n" {
+				fmt.Println("Stopping the program.")
+				os.Exit(0)
+				break
+			}
+			fmt.Println("You need to input valid option! (y/n)")
+		}
+	}
+	return &previousConfig
+}
+
+func DeleteFolderData(folderPath string) error {
+	entries, err := os.ReadDir(folderPath)
+	if err != nil {
+		return fmt.Errorf("failed to read directory: %w", err)
+	}
+
+	for _, entry := range entries {
+		if entry.Type().IsRegular() || entry.Type()&fs.ModeSymlink != 0 {
+			err := os.Remove(filepath.Join(folderPath, entry.Name()))
+			if err != nil {
+				return fmt.Errorf("failed to delete file %s: %w", entry.Name(), err)
+			}
+		}
+	}
+
+	return nil
+}
+
+func DeleteOldData() error {
+	ssTableDataFolderpath := "./data"
+	walFolderpath := "./wal/wals"
+	walOffsetFilepath := "./wal/offset.bin"
+
+	// DELETE SSTABLE DATA
+	err := DeleteFolderData(ssTableDataFolderpath)
+	if err != nil {
+		return fmt.Errorf("Failed to delete SSTable data: %w", err)
+	}
+
+	// DELETE WAL OFFSET FILE
+	err = os.Remove(walOffsetFilepath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("Failed to delete offset.bin: %w", err)
+	}
+
+	// DELETE WAL DATA
+	err = DeleteFolderData(walFolderpath)
+	if err != nil {
+		return fmt.Errorf("Failed to delete WAL data: %w", err)
+	}
+
+	return nil
 }
 
 func SetConfigValues(cfg *Config) {
@@ -138,7 +311,7 @@ func SetConfigValues(cfg *Config) {
 	IndexSparsity = cfg.SSTable.IndexSparsity
 	SeparateFiles = cfg.SSTable.SeparateFiles
 	Compression = cfg.SSTable.Compression
-	VariableHeader = cfg.SSTable.VariableEncoding
+	VariableHeader = cfg.SSTable.VariableHeader
 
 	// LSM TREE
 	MaxLevels = cfg.LSMTree.MaxLevels

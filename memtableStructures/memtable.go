@@ -1,4 +1,4 @@
-package main
+package memtableStructures
 
 import (
 	"bytes"
@@ -176,9 +176,9 @@ func (mt *MemoryTable) Search(key string) (*Element, bool) {
 	if mt.Structure == "skiplist" {
 		sl := mt.Data.(*SkipList)
 		value, found := sl.search(key)
-		if !found {
+		if value.Tombstone || !found {
 			//fmt.Println("Ne postoji element sa unetim kljucem!")
-
+			return nil, false
 		} else {
 			return value, true
 		}
@@ -186,9 +186,9 @@ func (mt *MemoryTable) Search(key string) (*Element, bool) {
 	} else if mt.Structure == "btree" {
 		tree := mt.Data.(*BTree)
 		value, found := tree.search(key)
-
-		if !found {
+		if value.Tombstone || !found {
 			//fmt.Println("Ne postoji element sa unetim kljucem!")
+			return nil, false
 		} else {
 			return value, true
 		}
@@ -197,8 +197,9 @@ func (mt *MemoryTable) Search(key string) (*Element, bool) {
 		hashMap := mt.Data.(*HashMap)
 		value, found := hashMap.search(key)
 
-		if !found {
+		if value.Tombstone || !found {
 			//fmt.Println("Ne postoji element sa unetim kljucem!")
+			return nil, false
 		} else {
 			return value, true
 		}

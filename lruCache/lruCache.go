@@ -41,3 +41,11 @@ func (c *LRUCache) Get(key string) (string, bool) {
 	}
 	return "", false
 }
+
+func (c *LRUCache) Remove(key string) {
+	if node, exists := c.entries[key]; exists {
+		c.list.remove(node)
+		delete(c.entries, key)
+		c.size--
+	}
+}

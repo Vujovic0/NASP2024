@@ -559,7 +559,7 @@ func (wal *WAL) LoadWALLogs(memtable *memtableStructures.MemTableManager) {
 						fmt.Println(log)
 						logSize := CalculateSerializedLogSize(log.Key, log.Value)
 						offset += logSize
-						memtable.Insert(log.Key, []byte(log.Value), wal.walNames[fileIndex], wal.CurrentBlock, offset)
+						memtable.Insert(log.Key, []byte(log.Value), log.Tombstone, wal.walNames[fileIndex], wal.CurrentBlock, offset)
 					} else {
 						break
 					}
@@ -590,7 +590,7 @@ func (wal *WAL) LoadWALLogs(memtable *memtableStructures.MemTableManager) {
 				reading = false
 				log, _ := DeserializeLogEntry(wholeBlockData)
 				fmt.Println(log)
-				memtable.Insert(log.Key, []byte(log.Value), wal.walNames[fileIndex], wal.CurrentBlock, 0)
+				memtable.Insert(log.Key, []byte(log.Value), log.Tombstone, wal.walNames[fileIndex], wal.CurrentBlock, 0)
 				wal.CurrentBlock += 1
 			}
 			if wal.CurrentBlock == wal.segmentSize {
