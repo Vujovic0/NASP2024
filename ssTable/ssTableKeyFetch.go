@@ -153,7 +153,7 @@ func GetKeysType2(block *blockManager.Block, keySize uint64, valueSize uint64, t
 
 	if !tombstone {
 		//If the value data fits, then it should be type 3
-		if !config.VariableEncoding && blockPointer+valueSize <= blockSize {
+		if !config.VariableHeader && blockPointer+valueSize <= blockSize {
 			return nil, nil, 0, 0, errors.New("the block is corrupted")
 		}
 
@@ -176,7 +176,7 @@ func GetKeysType3(block *blockManager.Block, keySize uint64, valueSize uint64, t
 	var valueBytes []byte = make([]byte, 0)
 
 	//Check if key data fits inside or overflows further
-	if !config.VariableEncoding && keySize+valueSize > dataSize {
+	if !config.VariableHeader && keySize+valueSize > dataSize {
 		return nil, nil, errors.New("the block is corrupted")
 	} else {
 		keyBytes = append(keyBytes, blockData[blockPointer:blockPointer+keySize]...)

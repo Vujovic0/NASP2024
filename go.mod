@@ -11,3 +11,4 @@ replace github.com/Vujovic0/NASP2024/probabilisticDataStructures/hyperloglog => 
 replace github.com/Vujovic0/NASP2024/ssTable => ./ssTable
 
 replace github.com/Vujovic0/NASP2024/wal => ./wal
+

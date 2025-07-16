@@ -12,6 +12,7 @@ import (
 
 	"github.com/Vujovic0/NASP2024/blockManager"
 	"github.com/Vujovic0/NASP2024/config"
+	"github.com/Vujovic0/NASP2024/probabilisticDataStructures/bloomFilter"
 )
 
 func searchCompact(filePath string, key []byte, prefix bool) ([]byte, uint64, error) {
@@ -30,14 +31,17 @@ func searchCompact(filePath string, key []byte, prefix bool) ([]byte, uint64, er
 		panic("Error: can't get file info")
 	}
 
-	var indexStart uint64
-	var summaryStart uint64
-
 	footerBlock := blockManager.ReadBlock(file, uint64(math.Ceil(float64(fileInfo.Size())/float64(blockSize))-1))
 	footerData := footerBlock.GetData()
 
-	indexStart = binary.LittleEndian.Uint64(footerData[17:25])
-	summaryStart = binary.LittleEndian.Uint64(footerData[25:33])
+	indexStart := binary.LittleEndian.Uint64(footerData[17:25])
+	summaryStart := binary.LittleEndian.Uint64(footerData[25:33])
+	filterStart := binary.LittleEndian.Uint64(footerData[9+4*8 : 9+5*8])
+
+	filter, _ := fetchFilter(file, filterStart)
+	if !bloomFilter.SearchData(filter, string(key)) {
+		return nil, 0, nil
+	}
 
 	maximumBound, err := GetMaximumBound(file)
 	if err != nil {
@@ -65,7 +69,7 @@ func searchCompact(filePath string, key []byte, prefix bool) ([]byte, uint64, er
 
 	for {
 		if blockOffset == boundIndex {
-			if !config.VariableEncoding {
+			if !config.VariableHeader {
 				blockOffset = binary.LittleEndian.Uint64(valueBytes)
 			} else {
 				blockOffset, _ = binary.Uvarint(valueBytes)
@@ -103,7 +107,7 @@ func searchCompact(filePath string, key []byte, prefix bool) ([]byte, uint64, er
 					continue
 				}
 				currentSection++
-				if !config.VariableEncoding {
+				if !config.VariableHeader {
 					blockOffset = binary.LittleEndian.Uint64(values[len(values)-1])
 				} else {
 					blockOffset, _ = binary.Uvarint(values[len(values)-1])
@@ -121,7 +125,7 @@ func searchCompact(filePath string, key []byte, prefix bool) ([]byte, uint64, er
 				return values[index], entryBlockOffset, nil
 			}
 
-			if !config.VariableEncoding {
+			if !config.VariableHeader {
 				blockOffset = binary.LittleEndian.Uint64(values[index])
 			} else {
 				blockOffset, _ = binary.Uvarint(values[index])
@@ -176,7 +180,7 @@ func searchCompact(filePath string, key []byte, prefix bool) ([]byte, uint64, er
 				if dataBlockCheck {
 					return valueBytes, entryBlockOffset, nil
 				}
-				if !config.VariableEncoding {
+				if !config.VariableHeader {
 					blockOffset = binary.LittleEndian.Uint64(valueBytes)
 				} else {
 					blockOffset, _ = binary.Uvarint(valueBytes)
@@ -200,7 +204,7 @@ func searchCompact(filePath string, key []byte, prefix bool) ([]byte, uint64, er
 				}
 				return lastValue, lastEntryOffset, nil
 			} else if compareResult < 0 && !dataBlockCheck {
-				if !config.VariableEncoding {
+				if !config.VariableHeader {
 					blockOffset = binary.LittleEndian.Uint64(valueBytes)
 				} else {
 					blockOffset, _ = binary.Uvarint(valueBytes)
@@ -377,10 +381,8 @@ func searchSeparated(filePath string, key []byte, offset uint64, prefix bool) ([
 // Returns [] if the key was not found
 func SearchAll(key []byte, prefix bool) []byte {
 	dataPath := getDataPath()
-	iterator := 1
 	readOrder := GetReadOrder(dataPath)
 	for _, filePath := range readOrder {
-		iterator += 1
 		valueBytes, _ := SearchOne(filePath, key, prefix)
 		if valueBytes != nil {
 			return valueBytes
@@ -410,8 +412,22 @@ func SearchOne(filePath string, key []byte, prefix bool) ([]byte, uint64) {
 		if !found {
 			panic(fmt.Sprintf("wrong file suffix, expected data.bin or compact.bin, got %s", fileName))
 		}
-		fileName = filePrefix + "-summary.bin"
+
+		fileName = filePrefix + "-filter.bin"
 		filePath := filepath.Join(dataPath, fileLevel, fileName)
+		fileptr, err := os.OpenFile(filePath, os.O_RDONLY, 0644)
+		if err != nil {
+			panic(err)
+		}
+		defer fileptr.Close()
+
+		filter, _ := fetchFilter(fileptr, 0)
+		if !bloomFilter.SearchData(filter, string(key)) {
+			return nil, 0
+		}
+
+		fileName = filePrefix + "-summary.bin"
+		filePath = filepath.Join(dataPath, fileLevel, fileName)
 		valueBytes, _, err = searchSeparated(filePath, key, 0, prefix)
 		if err != nil {
 			panic(err)
@@ -422,7 +438,7 @@ func SearchOne(filePath string, key []byte, prefix bool) ([]byte, uint64) {
 		fileName = filePrefix + "-index.bin"
 		filePath = filepath.Join(dataPath, fileLevel, fileName)
 
-		if !config.VariableEncoding {
+		if !config.VariableHeader {
 			offset = binary.LittleEndian.Uint64(valueBytes)
 		} else {
 			offset, _ = binary.Uvarint(valueBytes)
@@ -435,7 +451,7 @@ func SearchOne(filePath string, key []byte, prefix bool) ([]byte, uint64) {
 		fileName = filePrefix + "-data.bin"
 		filePath = filepath.Join(dataPath, fileLevel, fileName)
 
-		if !config.VariableEncoding {
+		if !config.VariableHeader {
 			offset = binary.LittleEndian.Uint64(valueBytes)
 		} else {
 			offset, _ = binary.Uvarint(valueBytes)
@@ -475,7 +491,7 @@ func GetMaximumBound(summaryFile *os.File) ([]byte, error) {
 	keySize := uint64(0)
 	keyBytes := make([]byte, 0)
 	data := fetchData(block)
-	if !config.VariableEncoding {
+	if !config.VariableHeader {
 		keySizeBytes := data[:8]
 		keySize = binary.LittleEndian.Uint64(keySizeBytes)
 		keyBytes = append(keyBytes, data[8:min(8+keySize, uint64(len(data)))]...) // key value of the last element
@@ -571,4 +587,14 @@ func FindLastSmallerKey(key []byte, keys [][]byte, dataBlock bool, prefix bool) 
 		}
 	}
 	return -1
+}
+
+func getFooter(file *os.File) *blockManager.Block {
+	fileInfo, err := file.Stat()
+	if err != nil {
+		panic(err)
+	}
+	fileSize := fileInfo.Size()
+	footerBlockIndex := math.Ceil(float64(fileSize)/float64(config.GlobalBlockSize)) - 1
+	return blockManager.ReadBlock(file, uint64(footerBlockIndex))
 }

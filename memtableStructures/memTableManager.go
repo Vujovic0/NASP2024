@@ -1,10 +1,15 @@
 package memtableStructures
 
 import (
+	"encoding/binary"
 	"fmt"
+	"hash/crc32"
+	"os"
 	"sort"
 
+	"github.com/Vujovic0/NASP2024/blockManager"
 	"github.com/Vujovic0/NASP2024/config"
+	"github.com/Vujovic0/NASP2024/probabilisticDataStructures/bloomFilter"
 	"github.com/Vujovic0/NASP2024/ssTable"
 )
 
@@ -22,10 +27,14 @@ func NewMemTableManager(maxImmutables int) *MemTableManager {
 	}
 }
 
-func (mtm *MemTableManager) Insert(key string, value []byte) {
-	mtm.active.Insert(key, value)
+func (mtm *MemTableManager) Insert(key string, value []byte, tombstone bool, WALSegmentName string, WALCurrentBlock int, WALByte int) {
+	mtm.active.Insert(key, value, tombstone)
 	// fmt.Printf("CurrentSize: %d, MaxSize: %d\n", mtm.active.CurrentSize, mtm.active.MaxSize)
 	if mtm.active.CurrentSize >= int(mtm.active.MaxSize) {
+		// DODAJ POSTAVLJANJE VREDNOSTI ZA WAL LOADING
+		mtm.active.WALLastSegment = WALSegmentName
+		mtm.active.WALBlockOffset = WALCurrentBlock
+		mtm.active.WALByteOffset = WALByte
 		mtm.FlushActive()
 	}
 }
@@ -408,6 +417,15 @@ func userSearchMenu(mtm *MemTableManager) {
 	}
 }
 
+func elementToSSTableElement(elem Element) *ssTable.Element {
+	return &ssTable.Element{
+		Key:       elem.Key,
+		Value:     elem.Value,
+		Timestamp: elem.Timestamp,
+		Tombstone: elem.Tombstone,
+	}
+}
+
 // Nova funkcija za flush jedne memtable
 func (mtm *MemTableManager) FlushMemTableToSSTable(memTable *MemoryTable, tableIndex int) {
 	fmt.Printf("Flushujemo MemTable_%d na disk...\n", tableIndex)
@@ -422,13 +440,33 @@ func (mtm *MemTableManager) FlushMemTableToSSTable(memTable *MemoryTable, tableI
 		lastElem := elements[len(elements)-1]
 		lastEntry := ssTable.InitEntry(0, false, uint64(lastElem.Timestamp), []byte(lastElem.Key), []byte{})
 		lastElementData := ssTable.SerializeEntry(lastEntry, true)
+
+		// Kreiramo bloom filter
+		filter := bloomFilter.MakeBloomFilter(len(elements), 0.01) // 1% false positive rate
+		keys := make([]string, len(elements))
+		for i, elem := range elements {
+			keys[i] = elem.Key
+		}
+		bloomFilter.AddData(filter, keys)
+
+		// Kreiramo slice pokazivaca na ssTable.Element
+		ssElements := make([]*ssTable.Element, len(elements))
+		for i := range elements {
+			ssElements[i] = elementToSSTableElement(elements[i])
+		}
+
+		// 3. Kreiramo Merkle tree
+		merkleTree := ssTable.NewMerkleTree(ssElements)
+
 		// 3. Koristi vrednosti iz konfiguracije
-		if config.UseCompactSSTable {
+		if !config.SeparateFiles {
 			ssTable.CreateCompactSSTable(
 				sstableData,
 				lastElementData,
 				int(config.SummarySparsity),
 				int(config.IndexSparsity),
+				filter,
+				merkleTree,
 			)
 			fmt.Printf(" SSTable_%d kreiran (COMPACT format) sa %d elemenata\n", tableIndex, len(elements))
 		} else {
@@ -437,6 +475,8 @@ func (mtm *MemTableManager) FlushMemTableToSSTable(memTable *MemoryTable, tableI
 				lastElementData,
 				int(config.SummarySparsity),
 				int(config.IndexSparsity),
+				filter,
+				merkleTree,
 			)
 			fmt.Printf(" SSTable_%d kreiran (SEPARATED format) sa %d elemenata\n", tableIndex, len(elements))
 		}
@@ -507,6 +547,10 @@ func (mtm *MemTableManager) FlushActive() {
 		oldest := mtm.immutables[0]
 		// Flushujemo je na disk
 		mtm.FlushMemTableToSSTable(oldest, 1)
+
+		// SAVING DATA FOR NEXT PROGRAM STARTUP
+		SaveOffsetData(oldest.WALLastSegment, oldest.WALBlockOffset, oldest.WALByteOffset)
+
 		// Uklanjamo je iz slice-a
 		mtm.immutables = mtm.immutables[1:]
 		// Koristimo je kao novu aktivnu
@@ -555,6 +599,42 @@ func elementToEntry(elem Element) *ssTable.Entry {
 	return ssTable.InitEntry(0, elem.Tombstone, uint64(elem.Timestamp), []byte(elem.Key), elem.Value)
 }
 
+func SaveOffsetData(WALLastSegment string, WALBlockOffset int, WALByteOffset int) {
+	nameLen := uint32(len(WALLastSegment))
+	// NAME LENGHT 4B | NAME XB | BLOCK INDEX 4B | BYTE INDEX 8B
+	arraySize := 4 + nameLen + 4 + 8
+
+	data := make([]byte, arraySize)
+
+	// WRITING NAME LENGHT AND NAME ITSELF
+	binary.LittleEndian.PutUint32(data[:4], nameLen)
+	copy(data[4:4+nameLen], []byte(WALLastSegment))
+
+	// WRITING BLOCK AND BYTE OFFSET
+	binary.LittleEndian.PutUint32(data[4+nameLen:8+nameLen], uint32(WALBlockOffset))
+	binary.LittleEndian.PutUint64(data[8+nameLen:], uint64(WALByteOffset))
+
+	dataSize := uint32(len(data))
+	blockData := make([]byte, config.GlobalBlockSize)
+	blockType := make([]byte, 1)
+	blockType[0] = 0
+	blockData[4] = blockType[0]
+	binary.LittleEndian.PutUint32(blockData[5:9], dataSize)
+	copy(blockData[9:], data)
+	crc := crc32.ChecksumIEEE(blockData[4:])
+	binary.LittleEndian.PutUint32(blockData[0:4], crc)
+	block := blockManager.InitBlock("./wal/offset.bin", 0, blockData)
+
+	file, err := os.OpenFile("./wal/offset.bin", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 066)
+	if err != nil {
+		// OFFSET.BIN PROBLEM
+	}
+
+	blockManager.WriteBlock(file, block)
+	file.Sync()
+	file.Close()
+}
+
 func main() {
 	mtm := NewMemTableManager(2)
 
@@ -569,7 +649,7 @@ func main() {
 
 	for i, key := range testData {
 		value := fmt.Sprintf("value_%d", i+1)
-		mtm.Insert(key, []byte(value))
+		mtm.Insert(key, []byte(value), false, "", 0, 0)
 		fmt.Printf("Insertovan: %s -> %s\n", key, value)
 	}
 

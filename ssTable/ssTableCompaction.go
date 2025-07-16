@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/Vujovic0/NASP2024/config"
+	"github.com/Vujovic0/NASP2024/probabilisticDataStructures/bloomFilter"
 
 	"github.com/Vujovic0/NASP2024/blockManager"
 )
@@ -20,6 +21,8 @@ type Tracker struct {
 	dataTracker    *DataTracker
 	indexTracker   *IndexTracker
 	summaryTracker *SummaryTracker
+	filterTracker  *FilterTracker
+	treeTracker    *TreeTracker
 }
 
 type DataTracker struct {
@@ -46,15 +49,18 @@ type SummaryTracker struct {
 	sparsity_counter uint64   //when sparsity_counter moduo global sparsity value equals 0, write to summary data
 }
 
-func initTracker() *Tracker {
-	var tracker *Tracker = new(Tracker)
-	tracker.dataTracker = new(DataTracker)
-	tracker.dataTracker.offset = new(uint64)
-	tracker.indexTracker = new(IndexTracker)
-	tracker.indexTracker.offset = new(uint64)
-	tracker.summaryTracker = new(SummaryTracker)
-	tracker.summaryTracker.offset = new(uint64)
-	return tracker
+type FilterTracker struct {
+	data        []byte
+	offset      *uint64
+	file        *os.File
+	offsetStart uint64
+}
+
+type TreeTracker struct {
+	data        []byte
+	offset      *uint64
+	file        *os.File
+	offsetStart uint64
 }
 
 // | CRC 4B | TimeStamp 8B | Tombstone 1B | Keysize 8B | Valuesize 8B | Key... | Value... |
@@ -66,15 +72,16 @@ type Entry struct {
 	value     []byte
 }
 
-func initEntry(crc uint32, tombstone bool, timeStamp uint64, key []byte, value []byte) *Entry {
-	return &Entry{
-		crc:       crc,
-		tombstone: tombstone,
-		timeStamp: timeStamp,
-		key:       key,
-		value:     value,
-	}
+func initTracker() *Tracker {
+	var tracker *Tracker = new(Tracker)
+	tracker.dataTracker = new(DataTracker)
+	tracker.indexTracker = new(IndexTracker)
+	tracker.summaryTracker = new(SummaryTracker)
+	tracker.filterTracker = new(FilterTracker)
+	tracker.treeTracker = new(TreeTracker)
+	return tracker
 }
+
 func InitEntry(crc uint32, tombstone bool, timeStamp uint64, key []byte, value []byte) *Entry {
 	return &Entry{
 		crc:       crc,
@@ -161,7 +168,7 @@ func getBlockEntriesTypeFull(block *blockManager.Block) ([]*Entry, error) {
 			blockPointer = blockPointer + keyStart + keySize + valueSize
 		}
 
-		entry := initEntry(crc, tombstone, timeStamp, key, value)
+		entry := InitEntry(crc, tombstone, timeStamp, key, value)
 		entryArray = append(entryArray, entry)
 	}
 
@@ -277,7 +284,7 @@ func getBlockEntriesTypeSplit(block *blockManager.Block, file *os.File, offset u
 	}
 	offset += 1
 
-	entry := initEntry(crc, tombstone, timeStamp, key, value)
+	entry := InitEntry(crc, tombstone, timeStamp, key, value)
 	return []*Entry{entry}, offset, nil
 }
 
@@ -323,16 +330,18 @@ func MergeTables(filesArg []*os.File, newFilePath string) {
 	var tableLimits []uint64 = getLimits(files) //array of limits for all files
 	var filesBlockOffsets []uint64 = make([]uint64, len(files))
 
-	var tracker *Tracker = new(Tracker)
-	tracker.dataTracker = new(DataTracker)
-	tracker.indexTracker = new(IndexTracker)
-	tracker.summaryTracker = new(SummaryTracker)
+	var tracker *Tracker = initTracker()
+	defineTracker(newFilePath, tracker)
+
+	hashes := []uint32{}
+	filters := getBloomFilters(files)
+	expectedElementCount := getExpectedElementCount(filters)
+	filter := bloomFilter.MakeBloomFilter(int(expectedElementCount), 0.01)
 
 	var entryTableIndexMap map[*Entry]int = make(map[*Entry]int)
 	var keyEntryMap map[string]*Entry = make(map[string]*Entry)
 	entryHeap := &EntryHeap{}
 	heap.Init(entryHeap)
-	defineTracker(newFilePath, tracker)
 
 	var err error
 
@@ -376,6 +385,8 @@ func MergeTables(filesArg []*os.File, newFilePath string) {
 		delete(keyEntryMap, minKey)
 
 		if !minEntry.tombstone {
+			bloomFilter.AddData(filter, []string{minKey})
+			hashes = append(hashes, minEntry.crc)
 			serializedEntry := SerializeEntry(minEntry, false)
 			tracker.summaryTracker.lastEntry = minEntry
 			flushDataIfFull(tracker, serializedEntry)
@@ -411,6 +422,9 @@ func MergeTables(filesArg []*os.File, newFilePath string) {
 		}
 	}
 
+	tree := NewMerkleTreeFromHashes(hashes)
+	tracker.treeTracker.data, _ = serializeMerkleTree(tree)
+	tracker.filterTracker.data, _ = bloomFilter.SerializeToBytes(filter)
 	//if there is no last entry, that means there are no valid entries at all so
 	//the file should just get deleted
 	if tracker.summaryTracker.lastEntry == nil {
@@ -421,6 +435,9 @@ func MergeTables(filesArg []*os.File, newFilePath string) {
 	flushDataBytes(tracker.dataTracker.data, tracker)
 	flushIndexBytes(tracker)
 	flushSummaryBytes(tracker)
+	flushFilter(tracker)
+	flushMerkleTree(tracker)
+	flushFooter(tracker)
 	GetGeneration(true)
 	closeTracker(tracker)
 }
@@ -514,13 +531,13 @@ func flushDataBytes(array []byte, tracker *Tracker) {
 		if !bytes.Equal(lastKey, newKey) {
 			lastKey = newKey
 			if tracker.indexTracker.sparsity_counter%uint64(config.IndexSparsity) == 0 {
-				if config.VariableEncoding {
+				if config.VariableHeader {
 					tracker.indexTracker.data = binary.AppendUvarint(tracker.indexTracker.data, uint64(len(newKey)))
 				} else {
 					tracker.indexTracker.data = binary.LittleEndian.AppendUint64(tracker.indexTracker.data, uint64(len(newKey)))
 				}
 				tracker.indexTracker.data = append(tracker.indexTracker.data, newKey...)
-				if config.VariableEncoding {
+				if config.VariableHeader {
 					tracker.indexTracker.data = binary.AppendUvarint(tracker.indexTracker.data, uint64(*offset))
 				} else {
 					tracker.indexTracker.data = binary.LittleEndian.AppendUint64(tracker.indexTracker.data, uint64(*offset))
@@ -534,7 +551,7 @@ func flushDataBytes(array []byte, tracker *Tracker) {
 
 // | CRC 4B | TimeStamp 8B | Tombstone 1B | Keysize 8B | Valuesize 8B | Key... | Value... |
 func SerializeEntry(entry *Entry, bound bool) []byte {
-	if config.VariableEncoding {
+	if config.VariableHeader {
 		return serializeEntryCompressed(entry, bound)
 	} else {
 		return serializeEntryNonCompressed(entry, bound)
@@ -559,7 +576,7 @@ func serializeEntryCompressed(entry *Entry, bound bool) []byte {
 	serializedData = binary.AppendUvarint(serializedData, uint64(len(entry.value)))
 	serializedData = append(serializedData, entry.key...)
 	serializedData = append(serializedData, entry.value...)
-
+	binary.LittleEndian.PutUint32(serializedData[0:4], crc32.ChecksumIEEE(serializedData[4:]))
 	return serializedData
 }
 
@@ -581,6 +598,7 @@ func serializeEntryNonCompressed(entry *Entry, bound bool) []byte {
 	serializedData = binary.LittleEndian.AppendUint64(serializedData, uint64(len(entry.value)))
 	serializedData = append(serializedData, entry.key...)
 	serializedData = append(serializedData, entry.value...)
+	binary.LittleEndian.PutUint32(serializedData[0:4], crc32.ChecksumIEEE(serializedData[4:]))
 	return serializedData
 }
 
@@ -601,9 +619,11 @@ func defineTracker(newFilePath string, tracker *Tracker) {
 }
 
 func closeTracker(tracker *Tracker) {
+	tracker.dataTracker.file.Close()
 	tracker.indexTracker.file.Close()
 	tracker.summaryTracker.file.Close()
-	tracker.indexTracker.file.Close()
+	tracker.filterTracker.file.Close()
+	tracker.treeTracker.file.Close()
 }
 
 // Creates pointers for adequate files and pointers to adequate numbers
@@ -624,17 +644,32 @@ func defineTrackerSeparate(newFilePath string, tracker *Tracker) {
 	if err != nil {
 		panic(err)
 	}
+	newFileFilter, err := os.OpenFile(filePrefix+"filter.bin", os.O_CREATE, 0664)
+	if err != nil {
+		panic(err)
+	}
+	newFileTree, err := os.OpenFile(filePrefix+"tree.bin", os.O_CREATE, 0664)
+	if err != nil {
+		panic(err)
+	}
 
 	tracker.dataTracker.file = newFileData
 	tracker.indexTracker.file = newFileIndex
 	tracker.summaryTracker.file = newFileSummary
+	tracker.filterTracker.file = newFileFilter
+	tracker.treeTracker.file = newFileTree
 
 	tracker.dataTracker.offset = new(uint64)
 	tracker.indexTracker.offset = new(uint64)
 	tracker.summaryTracker.offset = new(uint64)
+	tracker.filterTracker.offset = new(uint64)
+	tracker.treeTracker.offset = new(uint64)
+
 	*tracker.dataTracker.offset = 0
 	*tracker.indexTracker.offset = 0
 	*tracker.summaryTracker.offset = 0
+	*tracker.filterTracker.offset = 0
+	*tracker.treeTracker.offset = 0
 }
 
 // Makes all tracker file pointers point at the same file and indexes at the same number
@@ -646,11 +681,15 @@ func defineTrackerCompact(newFilePath string, tracker *Tracker) {
 	tracker.dataTracker.file = newFile
 	tracker.indexTracker.file = newFile
 	tracker.summaryTracker.file = newFile
+	tracker.filterTracker.file = newFile
+	tracker.treeTracker.file = newFile
 
 	tracker.dataTracker.offset = new(uint64)
 	*tracker.dataTracker.offset = 0
 	tracker.indexTracker.offset = tracker.dataTracker.offset
 	tracker.summaryTracker.offset = tracker.dataTracker.offset
+	tracker.filterTracker.offset = tracker.dataTracker.offset
+	tracker.treeTracker.offset = tracker.dataTracker.offset
 }
 
 func flushIndexBytes(tracker *Tracker) {
@@ -666,13 +705,13 @@ func flushIndexBytes(tracker *Tracker) {
 		if !bytes.Equal(lastKey, newKey) {
 			lastKey = newKey
 			if tracker.summaryTracker.sparsity_counter%uint64(config.SummarySparsity) == 0 {
-				if config.VariableEncoding {
+				if config.VariableHeader {
 					tracker.summaryTracker.data = binary.AppendUvarint(tracker.summaryTracker.data, uint64(len(newKey)))
 				} else {
 					tracker.summaryTracker.data = binary.LittleEndian.AppendUint64(tracker.summaryTracker.data, uint64(len(newKey)))
 				}
 				tracker.summaryTracker.data = append(tracker.summaryTracker.data, newKey...)
-				if config.VariableEncoding {
+				if config.VariableHeader {
 					tracker.summaryTracker.data = binary.AppendUvarint(tracker.summaryTracker.data, uint64(*offset))
 				} else {
 					tracker.summaryTracker.data = binary.LittleEndian.AppendUint64(tracker.summaryTracker.data, uint64(*offset))
@@ -705,8 +744,22 @@ func flushSummaryBytes(tracker *Tracker) {
 		blockManager.WriteBlock(file, block)
 		*offset += 1
 	}
+}
 
-	flushFooter(tracker)
+func flushFilter(tracker *Tracker) {
+	filterBytes := tracker.filterTracker.data
+	tracker.filterTracker.offsetStart = *tracker.filterTracker.offset
+	offset := *tracker.filterTracker.offset
+	offset = writeData(filterBytes, tracker.filterTracker.file, offset)
+	*tracker.filterTracker.offset = offset
+}
+
+func flushMerkleTree(tracker *Tracker) {
+	treeBytes := tracker.treeTracker.data
+	tracker.treeTracker.offsetStart = *tracker.filterTracker.offset
+	offset := *tracker.treeTracker.offset
+	offset = writeData(treeBytes, tracker.treeTracker.file, offset)
+	*tracker.treeTracker.offset = offset
 }
 
 func flushFooter(tracker *Tracker) {
@@ -724,6 +777,11 @@ func flushFooter(tracker *Tracker) {
 
 	footerData = binary.LittleEndian.AppendUint64(footerData, uint64(boundStart))
 
+	if strings.HasSuffix(tracker.summaryTracker.file.Name(), "compact.bin") {
+		footerData = binary.LittleEndian.AppendUint64(footerData, uint64(tracker.filterTracker.offsetStart))
+		footerData = binary.LittleEndian.AppendUint64(footerData, uint64(tracker.treeTracker.offsetStart))
+	}
+
 	var blockData []byte = make([]byte, config.GlobalBlockSize)
 	copy(blockData[9:], footerData)
 	blockData[4] = 0
@@ -732,4 +790,42 @@ func flushFooter(tracker *Tracker) {
 
 	block := blockManager.InitBlock(tracker.summaryTracker.file.Name(), *offset, blockData)
 	blockManager.WriteBlock(tracker.summaryTracker.file, block)
+}
+
+func getBloomFilters(files []*os.File) []*bloomFilter.BloomFilter {
+	filters := []*bloomFilter.BloomFilter{}
+	var filter *bloomFilter.BloomFilter
+	for _, file := range files {
+		fileName := file.Name()
+		if strings.HasSuffix(fileName, "compact.bin") {
+			footerBlock := getFooter(file)
+			footerData := footerBlock.GetData()[9:]
+			filterStart := binary.LittleEndian.Uint64(footerData[4*8 : 5*8])
+			filterBytes, _ := readData(file, filterStart)
+			filter, _ = bloomFilter.DeserializeFromBytes(filterBytes)
+		} else {
+			filterPath, found := strings.CutSuffix(fileName, "data.bin")
+			if !found {
+				panic("filter path not found??? how")
+			}
+			filterPath += "filter.bin"
+			filterFile, err := os.OpenFile(filterPath, os.O_RDONLY, 0664)
+			if err != nil {
+				panic(err)
+			}
+			defer filterFile.Close()
+			filterBytes, _ := readData(filterFile, 0)
+			filter, _ = bloomFilter.DeserializeFromBytes(filterBytes)
+		}
+		filters = append(filters, filter)
+	}
+	return filters
+}
+
+func getExpectedElementCount(filters []*bloomFilter.BloomFilter) uint64 {
+	elementCount := uint64(0)
+	for _, filter := range filters {
+		elementCount += uint64(filter.GetNumOfElem())
+	}
+	return elementCount
 }

@@ -3,28 +3,29 @@ package memtableStructures
 import (
 	"bytes"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"hash/crc32"
 	"log"
-	"os"
 	"sort"
 	"time"
 
 	"github.com/Vujovic0/NASP2024/config"
 )
 
-type Config struct {
-	WalSize           uint64 `json:"wal_size"`
-	MemtableSize      uint64 `json:"memtable_size"`
-	MemtableStructure string `json:"memtable_structure"`
-}
+// type Config struct {
+// 	WalSize           uint64 `json:"wal_size"`
+// 	MemtableSize      uint64 `json:"memtable_size"`
+// 	MemtableStructure string `json:"memtable_structure"`
+// }
 
 type MemoryTable struct {
-	Data        interface{} // Moze biti SkipList, BTree ili HashMap
-	MaxSize     uint64
-	Structure   string // Moze biti "btree","skiplist" ili "hashMap"
-	CurrentSize int
+	Data           interface{} // Moze biti SkipList, BTree ili HashMap
+	MaxSize        uint64
+	Structure      string // Moze biti "btree","skiplist" ili "hashMap"
+	CurrentSize    int
+	WALLastSegment string // NAME OF THE LAST WAL USED FOR THIS TABLE, NEEDED FOR THE WAL LOADING
+	WALBlockOffset int    // BLOCK INDEX IN SEGMENT
+	WALByteOffset  int    // BYTE OFFSET, NEEDED ONLY FOR BLOCK WHICH TYPE != 0
 }
 
 type Element struct {
@@ -34,47 +35,48 @@ type Element struct {
 	Tombstone bool
 }
 
-func loadConfig() Config {
-	// Postavi default vrednosti
-	config := Config{
-		WalSize:           10,
-		MemtableSize:      10,
-		MemtableStructure: "hashMap",
-	}
+// func loadConfig() Config {
+// 	// Postavi default vrednosti
+// 	config := Config{
+// 		WalSize:           10,
+// 		MemtableSize:      10,
+// 		MemtableStructure: "hashMap",
+// 	}
 
-	// Pokusavamo da ucitamo konfiguraciju iz fajla
-	configData, err := os.ReadFile("config.json")
-	if err == nil {
-		json.Unmarshal(configData, &config)
-		// Ako neko polje nedostaje u fajlu, ostaje default iz koda!
-	}
-	return config
-}
+// 	// Pokusavamo da ucitamo konfiguraciju iz fajla
+// 	configData, err := os.ReadFile("config.json")
+// 	if err == nil {
+// 		json.Unmarshal(configData, &config)
+// 		// Ako neko polje nedostaje u fajlu, ostaje default iz koda!
+// 	}
+// 	return config
+// }
 
 func initializeMemoryTable() *MemoryTable {
-	config := loadConfig()
 	// var config Config
-	configData, err := os.ReadFile("config.json")
-	if err != nil {
-		log.Fatal(err)
-	}
-	err = json.Unmarshal(configData, &config)
-	if err != nil {
-		log.Fatal("Error parsing config: ", err)
-	}
-	fmt.Println(config)
+	// configData, err := os.ReadFile("./memtableStructures/config.json")
+	// // configData, err := os.ReadFile("config.json")
+
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
+	// err = json.Unmarshal(configData, &config)
+	// if err != nil {
+	// 	log.Fatal("Error parsing config: ", err)
+	// }
+	// fmt.Println(config)
 
 	var memTable *MemoryTable
 
-	switch config.MemtableStructure {
+	switch config.ImplementationType {
 	case "btree":
-		memTable = initializeBTreeMemTable(&config)
+		memTable = initializeBTreeMemTable()
 	case "skiplist":
-		memTable = initializeSkipListMemTable(&config)
+		memTable = initializeSkipListMemTable()
 	case "hashMap":
-		memTable = initializeHashMapMemtable(&config)
+		memTable = initializeHashMapMemtable()
 	default:
-		log.Fatal("Nepoznata struktura memtable: ", config.MemtableStructure)
+		log.Fatal("Nepoznata struktura memtable: ", config.ImplementationType)
 	}
 
 	return memTable
@@ -87,54 +89,54 @@ type Memtable interface {
 	Delete(key string)
 }
 
-func initializeSkipListMemTable(config *Config) *MemoryTable {
+func initializeSkipListMemTable() *MemoryTable {
 	// Kreiranje SkipList-e
 	skipList := newSkipList(16) // Primer maksimalne visine
 	memTable := &MemoryTable{
 		Data:        skipList,
-		MaxSize:     config.MemtableSize,
-		Structure:   config.MemtableStructure,
+		MaxSize:     uint64(config.SingleTableSize),
+		Structure:   config.ImplementationType,
 		CurrentSize: 0,
 	}
-	fmt.Println("Memtable initialized with config: ", config)
+	fmt.Println("Memtable initialized with config: ", config.ImplementationType, config.SingleTableSize)
 
 	return memTable
 }
 
-func initializeBTreeMemTable(config *Config) *MemoryTable {
+func initializeBTreeMemTable() *MemoryTable {
 	// Kreiranje BTree-a
 	BTree := newBTree(16)
 	memTable := &MemoryTable{
 		Data:        BTree,
-		MaxSize:     config.MemtableSize,
-		Structure:   config.MemtableStructure,
+		MaxSize:     uint64(config.SingleTableSize),
+		Structure:   config.ImplementationType,
 		CurrentSize: 0,
 	}
-	fmt.Println("Memtable initialized with config: ", config)
+	fmt.Println("Memtable initialized with config: ", config.ImplementationType, config.SingleTableSize)
 
 	return memTable
 }
 
-func initializeHashMapMemtable(config *Config) *MemoryTable {
+func initializeHashMapMemtable() *MemoryTable {
 	// Kreiranje HashMape
 	hashMap := newHashMap(16)
 	memTable := &MemoryTable{
 		Data:        hashMap,
-		MaxSize:     config.MemtableSize,
-		Structure:   config.MemtableStructure,
+		MaxSize:     uint64(config.SingleTableSize),
+		Structure:   config.ImplementationType,
 		CurrentSize: 0,
 	}
-	fmt.Println("Memtable initialized with config: ", config)
+	fmt.Println("Memtable initialized with config: ", config.ImplementationType, config.SingleTableSize)
 
 	return memTable
 }
 
-func (mt *MemoryTable) Insert(key string, value []byte) {
+func (mt *MemoryTable) Insert(key string, value []byte, tombstone bool) {
 	element := Element{
 		Key:       key,
 		Value:     value,
 		Timestamp: time.Now().Unix(),
-		Tombstone: false,
+		Tombstone: tombstone,
 	}
 
 	fmt.Printf("Inserting element: Key=%s, Value=%s\n", key, value)
@@ -174,9 +176,9 @@ func (mt *MemoryTable) Search(key string) (*Element, bool) {
 	if mt.Structure == "skiplist" {
 		sl := mt.Data.(*SkipList)
 		value, found := sl.search(key)
-		if !found {
-			fmt.Println("Ne postoji element sa unetim kljucem!")
-
+		if value.Tombstone || !found {
+			//fmt.Println("Ne postoji element sa unetim kljucem!")
+			return nil, false
 		} else {
 			return value, true
 		}
@@ -184,9 +186,9 @@ func (mt *MemoryTable) Search(key string) (*Element, bool) {
 	} else if mt.Structure == "btree" {
 		tree := mt.Data.(*BTree)
 		value, found := tree.search(key)
-
-		if !found {
-			fmt.Println("Ne postoji element sa unetim kljucem!")
+		if value.Tombstone || !found {
+			//fmt.Println("Ne postoji element sa unetim kljucem!")
+			return nil, false
 		} else {
 			return value, true
 		}
@@ -195,8 +197,9 @@ func (mt *MemoryTable) Search(key string) (*Element, bool) {
 		hashMap := mt.Data.(*HashMap)
 		value, found := hashMap.search(key)
 
-		if !found {
-			fmt.Println("Ne postoji element sa unetim kljucem!")
+		if value.Tombstone || !found {
+			//fmt.Println("Ne postoji element sa unetim kljucem!")
+			return nil, false
 		} else {
 			return value, true
 		}
@@ -390,7 +393,7 @@ func elementToBytes(element *Element) []byte {
 	tmp := make([]byte, binary.MaxVarintLen64)
 
 	// 1. Timestamp
-	if config.VariableEncoding {
+	if config.VariableHeader {
 		n := binary.PutVarint(tmp, element.Timestamp)
 		buffer.Write(tmp[:n])
 	} else {
@@ -407,7 +410,7 @@ func elementToBytes(element *Element) []byte {
 	}
 
 	// 3. Duzina kljuca
-	if config.VariableEncoding {
+	if config.VariableHeader {
 		n := binary.PutUvarint(tmp, uint64(len(element.Key)))
 		buffer.Write(tmp[:n])
 	} else {
@@ -418,7 +421,7 @@ func elementToBytes(element *Element) []byte {
 
 	// 4. Ako element nije tombstone, upisujemo duzinu vrednosti
 	if !element.Tombstone {
-		if config.VariableEncoding {
+		if config.VariableHeader {
 			n := binary.PutUvarint(tmp, uint64(len(element.Value)))
 			buffer.Write(tmp[:n])
 		} else {
@@ -444,7 +447,7 @@ func bytesToElement(data []byte) *Element {
 
 	// 1. Timestamp
 	var timestamp int64
-	if config.VariableEncoding {
+	if config.VariableHeader {
 		timestamp, _ = binary.ReadVarint(buffer)
 	} else {
 		timestampBytes := make([]byte, 8)
@@ -458,7 +461,7 @@ func bytesToElement(data []byte) *Element {
 
 	// 3. Duzina kljuca
 	var keyLen uint64
-	if config.VariableEncoding {
+	if config.VariableHeader {
 		keyLen, _ = binary.ReadUvarint(buffer)
 	} else {
 		keyLenBytes := make([]byte, 8)
@@ -469,7 +472,7 @@ func bytesToElement(data []byte) *Element {
 	// 4. Valuesize (samo ako nije tombstone)
 	var valueLen uint64
 	if !tombstone {
-		if config.VariableEncoding {
+		if config.VariableHeader {
 			valueLen, _ = binary.ReadUvarint(buffer)
 		} else {
 			valueLenBytes := make([]byte, 8)
