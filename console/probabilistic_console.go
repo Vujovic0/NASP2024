@@ -4,6 +4,9 @@ import (
 	"fmt"
 
 	"github.com/Vujovic0/NASP2024/config"
+	"github.com/Vujovic0/NASP2024/memtableStructures"
+	"github.com/Vujovic0/NASP2024/probabilisticDataStructures"
+	"github.com/Vujovic0/NASP2024/wal"
 )
 
 func AddPrefix(typeInput int, inputName string) string {
@@ -21,7 +24,39 @@ func AddPrefix(typeInput int, inputName string) string {
 	return ""
 }
 
-func CreateNewInstance(typeInput int) {
+func BloomFilterParametersInput() (int, float64) {
+	var elementsNum int
+	var falsePositive float64
+	for {
+		fmt.Println("Enter the expected number of elements: ")
+		_, error := fmt.Scan(&elementsNum)
+		if error != nil {
+			fmt.Println("You need to input an integer!")
+			continue
+		}
+		if elementsNum <= 0 {
+			fmt.Println("You need to input an integer > 0!")
+			continue
+		}
+		break
+	}
+	for {
+		fmt.Println("Enter the false positive percentege: ")
+		_, error := fmt.Scan(&falsePositive)
+		if error != nil {
+			fmt.Println("You need to input a float number!")
+			continue
+		}
+		if falsePositive <= 0 || falsePositive > 1 {
+			fmt.Println("You need to input an 0 < float < 1!")
+			continue
+		}
+		break
+	}
+	return elementsNum, falsePositive
+}
+
+func CreateNewInstance(typeInput int, wal *wal.WAL, memtable *memtableStructures.MemTableManager) {
 
 	fmt.Println("Enter the name of new instance: ")
 	var instanceName string
@@ -39,6 +74,18 @@ func CreateNewInstance(typeInput int) {
 		return
 	}
 	instanceName = AddPrefix(typeInput, instanceName)
+	switch typeInput {
+	case 1:
+		elementsNum, falsePositive := BloomFilterParametersInput()
+		bf := probabilisticDataStructures.MakeBloomFilter(elementsNum, falsePositive)
+		bfBytes := probabilisticDataStructures.SerializeToBytes(bf)
+		offset, err := wal.WriteLogEntry(instanceName, bfBytes, false)
+		if err != nil {
+			fmt.Println("Error happend while writing WAL! Returning...")
+			return
+		}
+		memtable.Insert(instanceName, bfBytes, false, wal.CurrentFile.Name(), wal.CurrentBlock, offset)
+	}
 }
 
 func DeleteExistingInstance(typeInput int) {
@@ -49,7 +96,7 @@ func AddElement(typeInput int) {
 
 }
 
-func OperationsMenu(typeInput int) {
+func OperationsMenu(typeInput int, wal *wal.WAL, memtable *memtableStructures.MemTableManager) {
 	var typeName string
 	var specificOperation string
 	switch typeInput {
@@ -73,7 +120,7 @@ func OperationsMenu(typeInput int) {
 		}
 		switch operationInput {
 		case 1:
-			CreateNewInstance(typeInput)
+			CreateNewInstance(typeInput, wal, memtable)
 		case 2:
 			DeleteExistingInstance(typeInput)
 		case 3:
@@ -90,7 +137,7 @@ func OperationsMenu(typeInput int) {
 
 }
 
-func LoadProbabilisticConsole() {
+func LoadProbabilisticConsole(wal *wal.WAL, memtable *memtableStructures.MemTableManager) {
 	for {
 		fmt.Print("--Probabilistic menu--\n 1. BloomFilter\n 2. CountMinSketch\n 3. HyperLogLog\n 4. SimHash\n 0. Return to main menu\n Choose one of the options above: ")
 		var typeInput int
@@ -100,7 +147,7 @@ func LoadProbabilisticConsole() {
 			continue
 		}
 		if typeInput > 0 && typeInput < 4 {
-			OperationsMenu(typeInput)
+			OperationsMenu(typeInput, wal, memtable)
 		} else if typeInput == 4 {
 			//SimHashOperationsMenu()
 		} else if typeInput == 0 {

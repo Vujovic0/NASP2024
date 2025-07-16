@@ -96,7 +96,7 @@ func Start() {
 			fmt.Println("--ABLE FUNCTIONS--\nPUT - putting key:value pair into the program\nGET - geting the value based on the given key\nDELETE - deleting the key along side it's value")
 			fmt.Println("AGREEMENT: Pair key:value from the perspective of the user are both in type string, but after the input, program restore the value into binary form.\n ...")
 		case 5:
-			LoadProbabilisticConsole()
+			LoadProbabilisticConsole(walFactory, memtable)
 		case 0:
 			fmt.Println("Exiting...")
 			return
@@ -126,7 +126,7 @@ func Put(walFactory *wal.WAL, mtm *memtableStructures.MemTableManager, lruCache 
 	if walFactory == nil {
 		fmt.Println("WAL nije uspešno inicijalizovan")
 	}
-	offset, err := (*walFactory).WriteLogEntry(inputKey, inputValue, false)
+	offset, err := (*walFactory).WriteLogEntry(inputKey, []byte(inputValue), false)
 	if err == nil {
 		mtm.Insert(inputKey, []byte(inputValue), false, walFactory.CurrentFile.Name(), walFactory.CurrentBlock, offset)
 		lruCache.Put(inputKey, inputValue)
@@ -176,7 +176,7 @@ func Delete(walFactory *wal.WAL, mtm *memtableStructures.MemTableManager, lruCac
 	fmt.Scan(&inputKey)
 	// HERE WE NEED TO GET THE VALUE BASED ON THE KEY ALONGSIDE DELETING BOTH FROM MEMORY AND DISK IF IT'S PERMANENT (?)
 	// MISSING THE APPROVE FROM WAL, DATA NEED TO BE SEND TO THE WAL WERE IT WILL BE STORED TILL DISMISED TO THE DISK
-	offset, err := (*walFactory).WriteLogEntry(inputKey, "", false)
+	offset, err := (*walFactory).WriteLogEntry(inputKey, []byte(""), false)
 	if err == nil {
 		mtm.Insert(inputKey, []byte(""), true, walFactory.CurrentFile.Name(), walFactory.CurrentBlock, offset)
 		//lruCache.Put(inputKey, inputValue)

@@ -20,11 +20,11 @@ type LogEntry struct {
 	Timestamp time.Time
 	Tombstone bool
 	Key       string
-	Value     string
+	Value     []byte
 }
 
 func (le LogEntry) String() string {
-	return fmt.Sprintf("LogEntry(Key: %s, Value: %d)", le.Key, le.Value)
+	return fmt.Sprintf("LogEntry(Key: %s, Value: %d)", le.Key, string(le.Value))
 }
 
 type WAL struct {
@@ -157,7 +157,7 @@ func (wal *WAL) DeserializeOffsetFile() (string, uint32, uint64) {
 
 }
 
-func NewLogEntry(key string, value string, tombstone bool) *LogEntry {
+func NewLogEntry(key string, value []byte, tombstone bool) *LogEntry {
 	logEntry := new(LogEntry)
 	logEntry.Key = key
 	logEntry.Value = value
@@ -166,7 +166,7 @@ func NewLogEntry(key string, value string, tombstone bool) *LogEntry {
 	return logEntry
 }
 
-func (wal *WAL) WriteLogEntry(key string, value string, tombstone bool) (int, error) {
+func (wal *WAL) WriteLogEntry(key string, value []byte, tombstone bool) (int, error) {
 	log := NewLogEntry(key, value, tombstone)
 	logEntryBytes := log.SerializeLogEntry()
 	logSizeNeeded := log.GetSerializedLogSize()
@@ -380,12 +380,12 @@ func (log LogEntry) SerializeLogEntry() []byte {
 	bytes = append(bytes, keyBytes...)
 
 	// VALUE LENGHT AND VALUE ITSELF
-	valueBytes := []byte(log.Value)
-	valueLen := len(valueBytes)
+	//valueBytes := []byte(log.Value)
+	valueLen := len(log.Value)
 	valueLenBytes := make([]byte, 8)
 	binary.LittleEndian.PutUint64(valueLenBytes, uint64(valueLen))
 	bytes = append(bytes, valueLenBytes...)
-	bytes = append(bytes, valueBytes...)
+	bytes = append(bytes, log.Value...)
 
 	// CONTROL HASH SUM
 	CRCbytes := make([]byte, 4)
@@ -446,7 +446,7 @@ func DeserializeLogEntry(data []byte) (LogEntry, bool) {
 	if offset+valueLen > len(payload) {
 		return LogEntry{}, false
 	}
-	value := string(payload[offset : offset+valueLen])
+	value := payload[offset : offset+valueLen]
 
 	return LogEntry{
 		Timestamp: timestamp,
@@ -456,11 +456,11 @@ func DeserializeLogEntry(data []byte) (LogEntry, bool) {
 	}, true
 }
 
-func CalculateSerializedLogSize(key string, value string) int {
+func CalculateSerializedLogSize(key string, value []byte) int {
 	keyBytes := []byte(key)
-	valueBytes := []byte(value)
+	//valueBytes := []byte(value)
 
-	totalSize := 4 + 8 + 1 + 8 + len(keyBytes) + 8 + len(valueBytes)
+	totalSize := 4 + 8 + 1 + 8 + len(keyBytes) + 8 + len(value)
 	return totalSize
 }
 
@@ -559,7 +559,7 @@ func (wal *WAL) LoadWALLogs(memtable *memtableStructures.MemTableManager) {
 						fmt.Println(log)
 						logSize := CalculateSerializedLogSize(log.Key, log.Value)
 						offset += logSize
-						memtable.Insert(log.Key, []byte(log.Value), log.Tombstone, wal.walNames[fileIndex], wal.CurrentBlock, offset)
+						memtable.Insert(log.Key, log.Value, log.Tombstone, wal.walNames[fileIndex], wal.CurrentBlock, offset)
 					} else {
 						break
 					}
@@ -590,7 +590,7 @@ func (wal *WAL) LoadWALLogs(memtable *memtableStructures.MemTableManager) {
 				reading = false
 				log, _ := DeserializeLogEntry(wholeBlockData)
 				fmt.Println(log)
-				memtable.Insert(log.Key, []byte(log.Value), log.Tombstone, wal.walNames[fileIndex], wal.CurrentBlock, 0)
+				memtable.Insert(log.Key, log.Value, log.Tombstone, wal.walNames[fileIndex], wal.CurrentBlock, 0)
 				wal.CurrentBlock += 1
 			}
 			if wal.CurrentBlock == wal.segmentSize {
