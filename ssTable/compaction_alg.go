@@ -97,7 +97,7 @@ func SizeTieredCompaction(level int) {
 	}
 
 	var outputFile string
-	if config.VariableEncoding {
+	if config.VariableHeader {
 		outputFile = filepath.Join(inputDir, fmt.Sprintf("usertable-%d-compact.bin", GetGeneration(false)))
 	} else {
 		outputFile = filepath.Join(inputDir, fmt.Sprintf("usertable-%d-data.bin", GetGeneration(false)))
