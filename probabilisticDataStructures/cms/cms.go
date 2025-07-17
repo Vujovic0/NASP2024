@@ -25,7 +25,9 @@ func MakeCountMinSketch(array []string, epsilon float64, delta float64) *CountMi
 	k := CalculateK(delta)
 	hash := CreateHashFunctions(k)
 	cms := NewCountMinSketch(m, k, hash)
-	cms = UpdateCountMinSketch(cms, array)
+	if array != nil {
+		cms = UpdateCountMinSketch(cms, array)
+	}
 	return cms
 }
 
@@ -127,5 +129,94 @@ func Deserialize(file *os.File) (*CountMinSketch, error) {
 			return nil, fmt.Errorf("error while reading register: %v", err)
 		}
 	}
+	return cms, nil
+}
+
+func SerializeToBytes(cms *CountMinSketch) ([]byte, error) {
+	buf := make([]byte, 0)
+
+	// Add register size
+	tmp := make([]byte, 8)
+	binary.LittleEndian.PutUint64(tmp, uint64(cms.registerSize))
+	buf = append(buf, tmp...)
+
+	// Add number of hash functions
+	binary.LittleEndian.PutUint64(tmp, uint64(len(cms.hash)))
+	buf = append(buf, tmp...)
+
+	// Add each hash function
+	for _, hfn := range cms.hash {
+		// Seed length
+		tmp4 := make([]byte, 4)
+		binary.LittleEndian.PutUint32(tmp4, uint32(len(hfn.Seed)))
+		buf = append(buf, tmp4...)
+
+		// Seed data
+		buf = append(buf, hfn.Seed...)
+	}
+
+	// Add register values
+	tmp4 := make([]byte, 4)
+	for _, row := range cms.register {
+		for _, reg := range row {
+			binary.LittleEndian.PutUint32(tmp4, reg)
+			buf = append(buf, tmp4...)
+		}
+	}
+
+	return buf, nil
+}
+
+func DeserializeFromBytes(data []byte) (*CountMinSketch, error) {
+	cms := &CountMinSketch{}
+	offset := 0
+
+	// Read registerSize (8 bytes)
+	if offset+8 > len(data) {
+		return nil, fmt.Errorf("not enough data for register size")
+	}
+	cms.registerSize = uint(binary.LittleEndian.Uint64(data[offset:]))
+	offset += 8
+
+	// Read number of hash functions (8 bytes)
+	if offset+8 > len(data) {
+		return nil, fmt.Errorf("not enough data for number of hash functions")
+	}
+	k := binary.LittleEndian.Uint64(data[offset:])
+	offset += 8
+
+	cms.hash = make([]HashWithSeed, k)
+	cms.register = make([][]uint32, k)
+
+	// Read hash functions
+	for i := uint64(0); i < k; i++ {
+		if offset+4 > len(data) {
+			return nil, fmt.Errorf("not enough data for seed length")
+		}
+		seedLen := binary.LittleEndian.Uint32(data[offset:])
+		offset += 4
+
+		if offset+int(seedLen) > len(data) {
+			return nil, fmt.Errorf("not enough data for seed content")
+		}
+		seed := make([]byte, seedLen)
+		copy(seed, data[offset:offset+int(seedLen)])
+		offset += int(seedLen)
+
+		cms.hash[i] = HashWithSeed{Seed: seed}
+	}
+
+	// Read [][]uint32 registers
+	for i := uint64(0); i < k; i++ {
+		cms.register[i] = make([]uint32, cms.registerSize)
+		for j := uint(0); j < cms.registerSize; j++ {
+			if offset+4 > len(data) {
+				return nil, fmt.Errorf("not enough data for register values")
+			}
+			cms.register[i][j] = binary.LittleEndian.Uint32(data[offset:])
+			offset += 4
+		}
+	}
+
 	return cms, nil
 }

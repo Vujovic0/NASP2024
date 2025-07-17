@@ -65,7 +65,9 @@ func NewHyperLogLog(p uint8) *HyperLogLog {
 
 func MakeHyperLoLog(p uint8, array []string) *HyperLogLog {
 	hll := NewHyperLogLog(p)
-	UpdateHyperLogLog(hll, p, array)
+	if array != nil {
+		UpdateHyperLogLog(hll, p, array)
+	}
 	return hll
 }
 
@@ -126,4 +128,14 @@ func Deserialize(file *os.File) (*HyperLogLog, error) {
 		return nil, fmt.Errorf("error while reading register: %v", err)
 	}
 	return hll, nil
+}
+
+func SerializeToBytes(hll *HyperLogLog) ([]byte, error) {
+	// TO DO
+	return nil, nil
+}
+
+func DeserializeFromBytes(data []byte) (*HyperLogLog, error) {
+	// TO DO
+	return nil, nil
 }

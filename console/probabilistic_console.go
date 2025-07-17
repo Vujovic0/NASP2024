@@ -2,10 +2,14 @@ package console
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/Vujovic0/NASP2024/config"
+	"github.com/Vujovic0/NASP2024/lruCache"
 	"github.com/Vujovic0/NASP2024/memtableStructures"
-	"github.com/Vujovic0/NASP2024/probabilisticDataStructures"
+	"github.com/Vujovic0/NASP2024/probabilisticDataStructures/bloomFilter"
+	"github.com/Vujovic0/NASP2024/probabilisticDataStructures/cms"
+	"github.com/Vujovic0/NASP2024/probabilisticDataStructures/hyperloglog"
 	"github.com/Vujovic0/NASP2024/wal"
 )
 
@@ -56,8 +60,57 @@ func BloomFilterParametersInput() (int, float64) {
 	return elementsNum, falsePositive
 }
 
-func CreateNewInstance(typeInput int, wal *wal.WAL, memtable *memtableStructures.MemTableManager) {
+func CountMinSketchParametersInput() (float64, float64) {
+	var epsilon float64
+	var delta float64
+	for {
+		fmt.Println("Enter the epsilon: ")
+		_, error := fmt.Scan(&epsilon)
+		if error != nil {
+			fmt.Println("You need to input a float number!")
+			continue
+		}
+		if epsilon <= 0 {
+			fmt.Println("You need to input a float > 0!")
+			continue
+		}
+		break
+	}
+	for {
+		fmt.Println("Enter the delta: ")
+		_, error := fmt.Scan(&delta)
+		if error != nil {
+			fmt.Println("You need to input a float number!")
+			continue
+		}
+		if delta <= 0 || delta > 1 {
+			fmt.Println("You need to input an 0 < float < 1!")
+			continue
+		}
+		break
+	}
+	return epsilon, delta
+}
 
+func HyperLogLogParametersInput() int {
+	var p int
+	for {
+		fmt.Println("Enter the precision between 4 and 16: ")
+		_, error := fmt.Scan(&p)
+		if error != nil {
+			fmt.Println("You need to input an integer number!")
+			continue
+		}
+		if p < 4 || p > 16 {
+			fmt.Println("You need to input 4 < integer < 16!")
+			continue
+		}
+		break
+	}
+	return p
+}
+
+func CreateNewInstance(typeInput int, wal *wal.WAL, memtable *memtableStructures.MemTableManager) {
 	fmt.Println("Enter the name of new instance: ")
 	var instanceName string
 	_, error := fmt.Scan(&instanceName)
@@ -66,37 +119,192 @@ func CreateNewInstance(typeInput int, wal *wal.WAL, memtable *memtableStructures
 		return
 	}
 	if hasProbabilisticPrefix(instanceName) {
-		fmt.Println("You entered a key with reserved prefix!")
-		fmt.Println("bf_ - BloomFilter")
-		fmt.Println("cms_ - CountMinSketch")
-		fmt.Println("hpp_ - HyperLogLog")
-		fmt.Println("sm_ - SimHash")
+		PrintPrefixError()
 		return
 	}
 	instanceName = AddPrefix(typeInput, instanceName)
 	switch typeInput {
 	case 1:
 		elementsNum, falsePositive := BloomFilterParametersInput()
-		bf := probabilisticDataStructures.MakeBloomFilter(elementsNum, falsePositive)
-		bfBytes := probabilisticDataStructures.SerializeToBytes(bf)
+		bf := bloomFilter.MakeBloomFilter(elementsNum, falsePositive)
+		bfBytes, err := bloomFilter.SerializeToBytes(bf)
+		if err != nil {
+			fmt.Println("Error happend while serializing BloomFilter! Returning...")
+			return
+		}
 		offset, err := wal.WriteLogEntry(instanceName, bfBytes, false)
 		if err != nil {
 			fmt.Println("Error happend while writing WAL! Returning...")
 			return
 		}
 		memtable.Insert(instanceName, bfBytes, false, wal.CurrentFile.Name(), wal.CurrentBlock, offset)
+		fmt.Println("New instance of BloomFilter saved...")
+		return
+	case 2:
+		epsilon, delta := CountMinSketchParametersInput()
+		cms := cms.MakeCountMinSketch(nil, epsilon, delta)
+		cmsBytes, err := cms.SerializeToBytes(cms)
+		if err != nil {
+			fmt.Println("Error happend while serializing CountMinSketch! Returning...")
+			return
+		}
+		offset, err := wal.WriteLogEntry(instanceName, cmsBytes, false)
+		if err != nil {
+			fmt.Println("Error happend while writing WAL! Returning...")
+			return
+		}
+		memtable.Insert(instanceName, cmsBytes, false, wal.CurrentFile.Name(), wal.CurrentBlock, offset)
+		fmt.Println("New instance of BloCountMinSketchomFilter saved...")
+		return
+	case 3:
+		p := HyperLogLogParametersInput()
+		hll, err := hyperloglog.MakeHyperLoLog(p, nil)
+		hllBytes, err := hyperloglog.SerializeToBytes(hll)
+		if err != nil {
+			fmt.Println("Error happend while serializing HyperLogLog! Returning...")
+			return
+		}
+		offset, err := wal.WriteLogEntry(instanceName, hllBytes, false)
+		if err != nil {
+			fmt.Println("Error happend while writing WAL! Returning...")
+			return
+		}
+		memtable.Insert(instanceName, hllBytes, false, wal.CurrentFile.Name(), wal.CurrentBlock, offset)
+		fmt.Println("New instance of HyperLogLog saved...")
+		return
 	}
 }
 
-func DeleteExistingInstance(typeInput int) {
+func DeleteExistingInstance(typeInput int, wal *wal.WAL, memtable *memtableStructures.MemTableManager, lruCache *lruCache.LRUCache) {
+	fmt.Println("Enter the name of instance you want to delete: ")
+	var instanceName string
+	_, error := fmt.Scan(&instanceName)
+	if error != nil {
+		fmt.Println("Error while loading input name...")
+		return
+	}
+	if hasProbabilisticPrefix(instanceName) {
+		PrintPrefixError()
+		return
+	}
+	instanceName = AddPrefix(typeInput, instanceName)
+	offset, err := wal.WriteLogEntry(instanceName, []byte(""), true)
+	if err != nil {
+		fmt.Println("Error happend while writing WAL! Returning...")
+		return
+	}
+	memtable.Insert(instanceName, []byte(""), true, wal.CurrentFile.Name(), wal.CurrentBlock, offset)
+	lruCache.Remove(instanceName)
+	switch typeInput {
+	case 1:
+		fmt.Println("Instance of BloomFilter deleted...")
+	case 2:
+		fmt.Println("Instance of CountMinSketch deleted...")
+	case 3:
+		fmt.Println("Instance of HyperLogLog deleted...")
+	case 4:
+		fmt.Println("Instance of SimHash deleted...")
+	}
+}
+
+func ReadInputValues() []string {
+	var input string
+	fmt.Print("Enter values separated by space: ")
+
+	fmt.Scanf("%[^\n]", &input)
+
+	values := strings.Fields(input)
+	return values
+}
+
+func AddElements(typeInput int, wal *wal.WAL, memtable *memtableStructures.MemTableManager, lruCache *lruCache.LRUCache) {
+	fmt.Println("Enter the name of instance you want to access: ")
+	var instanceName string
+	_, error := fmt.Scan(&instanceName)
+	if error != nil {
+		fmt.Println("Error while loading input name...")
+		return
+	}
+	if hasProbabilisticPrefix(instanceName) {
+		PrintPrefixError()
+		return
+	}
+	instanceName = AddPrefix(typeInput, instanceName)
+
+	foundBytes, foundCase := FindValue(instanceName, lruCache, memtable)
+	if foundCase == 0 {
+		fmt.Println("Instance with that input name doesn't exist!")
+		return
+	}
+
+	inputValues := ReadInputValues()
+
+	switch typeInput {
+	case 1:
+		bf, err := bloomFilter.DeserializeFromBytes(foundBytes)
+		if err != nil {
+			fmt.Println("Error while deserializing instance of BloomFilter!")
+			return
+		}
+		bf = bloomFilter.AddData(bf, inputValues)
+		bfBytes, err := bloomFilter.SerializeToBytes(bf)
+		if err != nil {
+			fmt.Println("Error happend while serializing BloomFilter! Returning...")
+			return
+		}
+		offset, err := wal.WriteLogEntry(instanceName, bfBytes, false)
+		if err != nil {
+			fmt.Println("Error happend while writing WAL! Returning...")
+			return
+		}
+		memtable.Insert(instanceName, bfBytes, false, wal.CurrentFile.Name(), wal.CurrentBlock, offset)
+		fmt.Println("Updated instance of BloomFilter saved...")
+		return
+	case 2:
+		cms, err := cms.DeserializeFromBytes(foundBytes)
+		if err != nil {
+			fmt.Println("Error while deserializing instance of CountMinSketch!")
+			return
+		}
+		cms = cms.UpdateCountMinSketch(cms, inputValues)
+		cmsBytes, err := cms.SerializeToBytes(cms)
+		if err != nil {
+			fmt.Println("Error happend while serializing CountMinSketch! Returning...")
+			return
+		}
+		offset, err := wal.WriteLogEntry(instanceName, cmsBytes, false)
+		if err != nil {
+			fmt.Println("Error happend while writing WAL! Returning...")
+			return
+		}
+		memtable.Insert(instanceName, cmsBytes, false, wal.CurrentFile.Name(), wal.CurrentBlock, offset)
+		fmt.Println("Updated instance of CountMinSketch saved...")
+		return
+	case 3:
+		hll, err := hyperloglog.DeserializeFromBytes(foundBytes)
+		if err != nil {
+			fmt.Println("Error while deserializing instance of HyperLogLog!")
+			return
+		}
+		hll = hyperloglog.UpdateHyperLogLog(hll, 10, inputValues)
+		hllBytes, err := hyperloglog.SerializeToBytes(hll)
+		if err != nil {
+			fmt.Println("Error happend while serializing HyperLogLog! Returning...")
+			return
+		}
+		offset, err := wal.WriteLogEntry(instanceName, hllBytes, false)
+		if err != nil {
+			fmt.Println("Error happend while writing WAL! Returning...")
+			return
+		}
+		memtable.Insert(instanceName, hllBytes, false, wal.CurrentFile.Name(), wal.CurrentBlock, offset)
+		fmt.Println("Updated instance of HyperLogLog saved...")
+		return
+	}
 
 }
 
-func AddElement(typeInput int) {
-
-}
-
-func OperationsMenu(typeInput int, wal *wal.WAL, memtable *memtableStructures.MemTableManager) {
+func OperationsMenu(typeInput int, wal *wal.WAL, memtable *memtableStructures.MemTableManager, lruCache *lruCache.LRUCache) {
 	var typeName string
 	var specificOperation string
 	switch typeInput {
@@ -122,9 +330,9 @@ func OperationsMenu(typeInput int, wal *wal.WAL, memtable *memtableStructures.Me
 		case 1:
 			CreateNewInstance(typeInput, wal, memtable)
 		case 2:
-			DeleteExistingInstance(typeInput)
+			DeleteExistingInstance(typeInput, wal, memtable, lruCache)
 		case 3:
-			AddElement(typeInput)
+			AddElements(typeInput, wal, memtable, lruCache)
 		case 4:
 			// OPERACIJA SPECIFIČNA TIPU
 		case 0:
@@ -137,7 +345,7 @@ func OperationsMenu(typeInput int, wal *wal.WAL, memtable *memtableStructures.Me
 
 }
 
-func LoadProbabilisticConsole(wal *wal.WAL, memtable *memtableStructures.MemTableManager) {
+func LoadProbabilisticConsole(wal *wal.WAL, memtable *memtableStructures.MemTableManager, lruCache *lruCache.LRUCache) {
 	for {
 		fmt.Print("--Probabilistic menu--\n 1. BloomFilter\n 2. CountMinSketch\n 3. HyperLogLog\n 4. SimHash\n 0. Return to main menu\n Choose one of the options above: ")
 		var typeInput int
@@ -147,7 +355,7 @@ func LoadProbabilisticConsole(wal *wal.WAL, memtable *memtableStructures.MemTabl
 			continue
 		}
 		if typeInput > 0 && typeInput < 4 {
-			OperationsMenu(typeInput, wal, memtable)
+			OperationsMenu(typeInput, wal, memtable, lruCache)
 		} else if typeInput == 4 {
 			//SimHashOperationsMenu()
 		} else if typeInput == 0 {

@@ -96,7 +96,7 @@ func Start() {
 			fmt.Println("--ABLE FUNCTIONS--\nPUT - putting key:value pair into the program\nGET - geting the value based on the given key\nDELETE - deleting the key along side it's value")
 			fmt.Println("AGREEMENT: Pair key:value from the perspective of the user are both in type string, but after the input, program restore the value into binary form.\n ...")
 		case 5:
-			LoadProbabilisticConsole(walFactory, memtable)
+			LoadProbabilisticConsole(walFactory, memtable, lruCacheFactory)
 		case 0:
 			fmt.Println("Exiting...")
 			return
@@ -104,6 +104,14 @@ func Start() {
 			fmt.Println("Your input is invalid!")
 		}
 	}
+}
+
+func PrintPrefixError() {
+	fmt.Println("You entered a key with reserved prefix!")
+	fmt.Println("bf_ - BloomFilter")
+	fmt.Println("cms_ - CountMinSketch")
+	fmt.Println("hpp_ - HyperLogLog")
+	fmt.Println("sm_ - SimHash")
 }
 
 func Put(walFactory *wal.WAL, mtm *memtableStructures.MemTableManager, lruCache *lruCache.LRUCache) (string, string) {
@@ -114,11 +122,7 @@ func Put(walFactory *wal.WAL, mtm *memtableStructures.MemTableManager, lruCache 
 	var inputValue string
 	fmt.Scan(&inputValue)
 	if hasProbabilisticPrefix(inputKey) {
-		fmt.Println("You entered a key with reserved prefix!")
-		fmt.Println("bf_ - BloomFilter")
-		fmt.Println("cms_ - CountMinSketch")
-		fmt.Println("hpp_ - HyperLogLog")
-		fmt.Println("sm_ - SimHash")
+		PrintPrefixError()
 		return "", ""
 	}
 	binInputValue := stringToBin(inputValue)
@@ -138,36 +142,45 @@ func Put(walFactory *wal.WAL, mtm *memtableStructures.MemTableManager, lruCache 
 	return inputKey, inputValue
 }
 
-func Get(lruCache *lruCache.LRUCache, memtableMenager *memtableStructures.MemTableManager) string {
-	fmt.Println("Enter the key:")
-	var inputKey string
-	fmt.Scan(&inputKey)
+func FindValue(inputKey string, lruCache *lruCache.LRUCache, memtableMenager *memtableStructures.MemTableManager) ([]byte, int) {
 	element, found := memtableMenager.Search(inputKey)
 	if found {
-		fmt.Println("Found value {" + string(element.Value) + "} for input key {" + inputKey + "}")
-		fmt.Println("Value founded in Memtable")
 		lruCache.Put(inputKey, string(element.Value))
-		return string(element.Value)
+		return element.Value, 1
 	}
 	value, found := lruCache.Get(inputKey)
 	if found {
-		fmt.Println("Found value {" + value + "} for input key {" + inputKey + "}")
-		fmt.Println("Value founded in LRU Cache")
 		lruCache.Put(inputKey, value)
-		return value
+		return element.Value, 2
 	}
 	valueBytes := ssTable.SearchAll([]byte(inputKey), false)
 	if len(valueBytes) > 0 {
-		value = string(valueBytes)
-		fmt.Println("Found value {" + value + "} forinput key {" + inputKey + "}")
-		fmt.Println("Value founded in SS Table")
 		lruCache.Put(inputKey, value)
-		return value
+		return element.Value, 3
 	}
-	// HERE WE NEED TO IMPLEMENT GETTING THE VALUE (for now only to write it on wal)
-	// MISSING THE APPROVE FROM WAL, DATA NEED TO BE SEND TO THE WAL WERE IT WILL BE STORED TILL DISMISED TO THE DISK
-	fmt.Println("There is no value for input key {" + inputKey + "}")
-	return ""
+	return []byte(""), 0
+}
+
+func Get(lruCache *lruCache.LRUCache, memtableMenager *memtableStructures.MemTableManager) {
+	fmt.Println("Enter the key:")
+	var inputKey string
+	fmt.Scan(&inputKey)
+	value, foundCase := FindValue(inputKey, lruCache, memtableMenager)
+	switch foundCase {
+	case 0:
+		fmt.Println("There is no value for input key {" + inputKey + "}")
+	case 1:
+		fmt.Println("Found value {" + string(value) + "} for input key {" + inputKey + "}")
+		fmt.Println("Value founded in Memtable")
+	case 2:
+		fmt.Println("Found value {" + string(value) + "} for input key {" + inputKey + "}")
+		fmt.Println("Value founded in LRU Cache")
+	case 3:
+		fmt.Println("Found value {" + string(value) + "} for input key {" + inputKey + "}")
+		fmt.Println("Value founded in SS Table")
+	case 4:
+		fmt.Println("There was an error for getting value of key {" + inputKey + "}")
+	}
 }
 
 func Delete(walFactory *wal.WAL, mtm *memtableStructures.MemTableManager, lruCache *lruCache.LRUCache) {
