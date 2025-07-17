@@ -131,11 +131,39 @@ func Deserialize(file *os.File) (*HyperLogLog, error) {
 }
 
 func SerializeToBytes(hll *HyperLogLog) ([]byte, error) {
-	// TO DO
-	return nil, nil
+	if hll == nil {
+		return nil, fmt.Errorf("HyperLogLog is nil")
+	}
+
+	m := uint64(1) << hll.p
+	buf := make([]byte, 0, 1+int(m)) // Precision p + m bytes for register
+
+	// Add precision
+	buf = append(buf, byte(hll.p))
+	// Add register
+	buf = append(buf, hll.register...)
+
+	return buf, nil
 }
 
 func DeserializeFromBytes(data []byte) (*HyperLogLog, error) {
-	// TO DO
-	return nil, nil
+	if len(data) < 1 {
+		return nil, fmt.Errorf("not enough data to read precision")
+	}
+
+	p := data[0]
+	m := uint64(1) << p
+	expectedLength := 1 + m
+	if uint64(len(data)) < expectedLength {
+		return nil, fmt.Errorf("not enough data to read register values: expected %d bytes, got %d", expectedLength, len(data))
+	}
+
+	register := make([]uint8, m)
+	copy(register, data[1:1+m])
+
+	return &HyperLogLog{
+		p:        p,
+		m:        m,
+		register: register,
+	}, nil
 }
