@@ -12,3 +12,7 @@ replace github.com/Vujovic0/NASP2024/ssTable => ./ssTable
 
 replace github.com/Vujovic0/NASP2024/wal => ./wal
 
+require (
+	github.com/Vujovic0/NASP2024/probabilisticDataStructures/cms v0.0.0-00010101000000-000000000000 // indirect
+	github.com/Vujovic0/NASP2024/probabilisticDataStructures/hyperloglog v0.0.0-00010101000000-000000000000 // indirect
+)

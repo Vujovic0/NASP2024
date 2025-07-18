@@ -142,8 +142,8 @@ func CreateNewInstance(typeInput int, wal *wal.WAL, memtable *memtableStructures
 		return
 	case 2:
 		epsilon, delta := CountMinSketchParametersInput()
-		cms := cms.MakeCountMinSketch(nil, epsilon, delta)
-		cmsBytes, err := cms.SerializeToBytes(cms)
+		cmsObject := cms.MakeCountMinSketch(nil, epsilon, delta)
+		cmsBytes, err := cms.SerializeToBytes(cmsObject)
 		if err != nil {
 			fmt.Println("Error happend while serializing CountMinSketch! Returning...")
 			return
@@ -158,7 +158,7 @@ func CreateNewInstance(typeInput int, wal *wal.WAL, memtable *memtableStructures
 		return
 	case 3:
 		p := HyperLogLogParametersInput()
-		hll, err := hyperloglog.MakeHyperLoLog(p, nil)
+		hll := hyperloglog.MakeHyperLoLog(uint8(p), nil)
 		hllBytes, err := hyperloglog.SerializeToBytes(hll)
 		if err != nil {
 			fmt.Println("Error happend while serializing HyperLogLog! Returning...")
@@ -261,13 +261,13 @@ func AddElements(typeInput int, wal *wal.WAL, memtable *memtableStructures.MemTa
 		fmt.Println("Updated instance of BloomFilter saved...")
 		return
 	case 2:
-		cms, err := cms.DeserializeFromBytes(foundBytes)
+		cmsObject, err := cms.DeserializeFromBytes(foundBytes)
 		if err != nil {
 			fmt.Println("Error while deserializing instance of CountMinSketch!")
 			return
 		}
-		cms = cms.UpdateCountMinSketch(cms, inputValues)
-		cmsBytes, err := cms.SerializeToBytes(cms)
+		cmsObject = cms.UpdateCountMinSketch(cmsObject, inputValues)
+		cmsBytes, err := cms.SerializeToBytes(cmsObject)
 		if err != nil {
 			fmt.Println("Error happend while serializing CountMinSketch! Returning...")
 			return
@@ -304,6 +304,54 @@ func AddElements(typeInput int, wal *wal.WAL, memtable *memtableStructures.MemTa
 
 }
 
+func BloomFilterSpecific(memtable *memtableStructures.MemTableManager, lruCache *lruCache.LRUCache) {
+	fmt.Println("Enter the name of instance you want to access: ")
+	var instanceName string
+	_, error := fmt.Scan(&instanceName)
+	if error != nil {
+		fmt.Println("Error while loading input name...")
+		return
+	}
+	if hasProbabilisticPrefix(instanceName) {
+		PrintPrefixError()
+		return
+	}
+	instanceName = AddPrefix(1, instanceName)
+	foundBytes, found := FindValue(instanceName, lruCache, memtable)
+	if found == 0 {
+		fmt.Println("Coulnd't find BloomFilter instance with provided name!")
+		return
+	}
+	bf, err := bloomFilter.DeserializeFromBytes(foundBytes)
+	if err != nil {
+		fmt.Println("Error while loading BloomFilter instance!")
+		return
+	}
+	var inputValue string
+	for {
+		fmt.Println("Enter value you want check in BloomFilter: ")
+		_, error := fmt.Scan(&inputValue)
+		if error != nil {
+			fmt.Println("Error while loading input name, try again")
+			continue
+		}
+		found := bloomFilter.SearchData(bf, inputValue)
+		if found {
+			fmt.Println("Value {" + inputValue + "} is found in {" + instanceName + "} instance of BloomFilter")
+		} else {
+			fmt.Println("Value {" + inputValue + "} is not found in {" + instanceName + "} instance of BloomFilter")
+		}
+		break
+	}
+}
+
+func SpecificOperation(typeInput int, memtable *memtableStructures.MemTableManager, lruCache *lruCache.LRUCache) {
+	switch typeInput {
+	case 1:
+		BloomFilterSpecific(memtable, lruCache)
+	}
+}
+
 func OperationsMenu(typeInput int, wal *wal.WAL, memtable *memtableStructures.MemTableManager, lruCache *lruCache.LRUCache) {
 	var typeName string
 	var specificOperation string
@@ -318,10 +366,10 @@ func OperationsMenu(typeInput int, wal *wal.WAL, memtable *memtableStructures.Me
 		typeName = "HyperLogLog"
 		specificOperation = "Provera kardinaliteta"
 	}
-	fmt.Print("--" + typeName + " operations menu--\n 1. NEW INSTANCE\n 2. DELETE EXISTING INSTANCE\n 3. ADD NEW ELEMENT\n 4. " + specificOperation + "\n 0. EXIT\n Choose one of the options above: ")
-	var operationInput int
-	_, error := fmt.Scan(&operationInput)
 	for {
+		fmt.Print("--" + typeName + " operations menu--\n 1. NEW INSTANCE\n 2. DELETE EXISTING INSTANCE\n 3. ADD NEW ELEMENT\n 4. " + specificOperation + "\n 0. EXIT\n Choose one of the options above: ")
+		var operationInput int
+		_, error := fmt.Scan(&operationInput)
 		if error != nil {
 			fmt.Println("The input is not integer! ERROR -> ", error)
 			continue
@@ -334,6 +382,7 @@ func OperationsMenu(typeInput int, wal *wal.WAL, memtable *memtableStructures.Me
 		case 3:
 			AddElements(typeInput, wal, memtable, lruCache)
 		case 4:
+			SpecificOperation(typeInput, memtable, lruCache)
 			// OPERACIJA SPECIFIČNA TIPU
 		case 0:
 			fmt.Println("Returning to probabilistic menu...")

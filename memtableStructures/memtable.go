@@ -176,7 +176,10 @@ func (mt *MemoryTable) Search(key string) (*Element, bool) {
 	if mt.Structure == "skiplist" {
 		sl := mt.Data.(*SkipList)
 		value, found := sl.search(key)
-		if value.Tombstone || !found {
+		if !found {
+			return nil, false
+		}
+		if value.Tombstone {
 			//fmt.Println("Ne postoji element sa unetim kljucem!")
 			return nil, false
 		} else {
@@ -186,7 +189,10 @@ func (mt *MemoryTable) Search(key string) (*Element, bool) {
 	} else if mt.Structure == "btree" {
 		tree := mt.Data.(*BTree)
 		value, found := tree.search(key)
-		if value.Tombstone || !found {
+		if !found {
+			return nil, false
+		}
+		if value.Tombstone {
 			//fmt.Println("Ne postoji element sa unetim kljucem!")
 			return nil, false
 		} else {
@@ -196,8 +202,10 @@ func (mt *MemoryTable) Search(key string) (*Element, bool) {
 	} else if mt.Structure == "hashMap" {
 		hashMap := mt.Data.(*HashMap)
 		value, found := hashMap.search(key)
-
-		if value.Tombstone || !found {
+		if !found {
+			return nil, false
+		}
+		if value.Tombstone {
 			//fmt.Println("Ne postoji element sa unetim kljucem!")
 			return nil, false
 		} else {
