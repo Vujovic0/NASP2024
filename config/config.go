@@ -45,6 +45,8 @@ var BlockManagerCacheSize int = 5
 var TokensNum int = 10
 var ResetingIntervalMs int = 1000
 
+const TokenBucketStateKey = "token_bucket_state"
+
 type Config struct {
 	WAL               wALConfig               `json:"wal"`
 	Memtable          memtableConfig          `json:"memtable"`

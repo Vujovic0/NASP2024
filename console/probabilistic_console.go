@@ -10,6 +10,7 @@ import (
 	"github.com/Vujovic0/NASP2024/probabilisticDataStructures/bloomFilter"
 	"github.com/Vujovic0/NASP2024/probabilisticDataStructures/cms"
 	"github.com/Vujovic0/NASP2024/probabilisticDataStructures/hyperloglog"
+	"github.com/Vujovic0/NASP2024/tokenBucket"
 	"github.com/Vujovic0/NASP2024/wal"
 )
 
@@ -110,7 +111,11 @@ func HyperLogLogParametersInput() int {
 	return p
 }
 
-func CreateNewInstance(typeInput int, wal *wal.WAL, memtable *memtableStructures.MemTableManager) {
+func CreateNewInstance(typeInput int, wal *wal.WAL, memtable *memtableStructures.MemTableManager, lruCache *lruCache.LRUCache, tokenBucket *tokenBucket.TokenBucket) {
+	if !tokenBucket.Consume(wal, memtable, lruCache) {
+		fmt.Println("Rate limit exceeded. Please wait before next operation.")
+		return
+	}
 	fmt.Println("Enter the name of new instance: ")
 	var instanceName string
 	_, error := fmt.Scan(&instanceName)
@@ -175,7 +180,11 @@ func CreateNewInstance(typeInput int, wal *wal.WAL, memtable *memtableStructures
 	}
 }
 
-func DeleteExistingInstance(typeInput int, wal *wal.WAL, memtable *memtableStructures.MemTableManager, lruCache *lruCache.LRUCache) {
+func DeleteExistingInstance(typeInput int, wal *wal.WAL, memtable *memtableStructures.MemTableManager, lruCache *lruCache.LRUCache, tokenBucket *tokenBucket.TokenBucket) {
+	if !tokenBucket.Consume(wal, memtable, lruCache) {
+		fmt.Println("Rate limit exceeded. Please wait before next operation.")
+		return
+	}
 	fmt.Println("Enter the name of instance you want to delete: ")
 	var instanceName string
 	_, error := fmt.Scan(&instanceName)
@@ -217,7 +226,11 @@ func ReadInputValues() []string {
 	return values
 }
 
-func AddElements(typeInput int, wal *wal.WAL, memtable *memtableStructures.MemTableManager, lruCache *lruCache.LRUCache) {
+func AddElements(typeInput int, wal *wal.WAL, memtable *memtableStructures.MemTableManager, lruCache *lruCache.LRUCache, tokenBucket *tokenBucket.TokenBucket) {
+	if !tokenBucket.Consume(wal, memtable, lruCache) {
+		fmt.Println("Rate limit exceeded. Please wait before next operation.")
+		return
+	}
 	fmt.Println("Enter the name of instance you want to access: ")
 	var instanceName string
 	_, error := fmt.Scan(&instanceName)
@@ -352,7 +365,7 @@ func SpecificOperation(typeInput int, memtable *memtableStructures.MemTableManag
 	}
 }
 
-func OperationsMenu(typeInput int, wal *wal.WAL, memtable *memtableStructures.MemTableManager, lruCache *lruCache.LRUCache) {
+func OperationsMenu(typeInput int, wal *wal.WAL, memtable *memtableStructures.MemTableManager, lruCache *lruCache.LRUCache, tokenBucket *tokenBucket.TokenBucket) {
 	var typeName string
 	var specificOperation string
 	switch typeInput {
@@ -376,11 +389,11 @@ func OperationsMenu(typeInput int, wal *wal.WAL, memtable *memtableStructures.Me
 		}
 		switch operationInput {
 		case 1:
-			CreateNewInstance(typeInput, wal, memtable)
+			CreateNewInstance(typeInput, wal, memtable, lruCache, tokenBucket)
 		case 2:
-			DeleteExistingInstance(typeInput, wal, memtable, lruCache)
+			DeleteExistingInstance(typeInput, wal, memtable, lruCache, tokenBucket)
 		case 3:
-			AddElements(typeInput, wal, memtable, lruCache)
+			AddElements(typeInput, wal, memtable, lruCache, tokenBucket)
 		case 4:
 			SpecificOperation(typeInput, memtable, lruCache)
 			// OPERACIJA SPECIFIČNA TIPU
@@ -394,7 +407,7 @@ func OperationsMenu(typeInput int, wal *wal.WAL, memtable *memtableStructures.Me
 
 }
 
-func LoadProbabilisticConsole(wal *wal.WAL, memtable *memtableStructures.MemTableManager, lruCache *lruCache.LRUCache) {
+func LoadProbabilisticConsole(wal *wal.WAL, memtable *memtableStructures.MemTableManager, lruCache *lruCache.LRUCache, tokenBucket *tokenBucket.TokenBucket) {
 	for {
 		fmt.Print("--Probabilistic menu--\n 1. BloomFilter\n 2. CountMinSketch\n 3. HyperLogLog\n 4. SimHash\n 0. Return to main menu\n Choose one of the options above: ")
 		var typeInput int
@@ -404,7 +417,7 @@ func LoadProbabilisticConsole(wal *wal.WAL, memtable *memtableStructures.MemTabl
 			continue
 		}
 		if typeInput > 0 && typeInput < 4 {
-			OperationsMenu(typeInput, wal, memtable, lruCache)
+			OperationsMenu(typeInput, wal, memtable, lruCache, tokenBucket)
 		} else if typeInput == 4 {
 			//SimHashOperationsMenu()
 		} else if typeInput == 0 {

@@ -1,19 +1,15 @@
 package tokenBucket
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/Vujovic0/NASP2024/config"
+	"github.com/Vujovic0/NASP2024/lruCache"
+	"github.com/Vujovic0/NASP2024/memtableStructures"
+	"github.com/Vujovic0/NASP2024/systemOps"
+	"github.com/Vujovic0/NASP2024/wal"
 )
-
-// Config represents the configuration structure for the token bucket.
-// type Config struct {
-// 	Capacity     int           `json:"capacity"`
-// 	TimeInterval time.Duration `json:"timeInterval"`
-// }
 
 type TokenBucket struct {
 	capacity       int
@@ -30,42 +26,6 @@ func NewTokenBucket(capacity int, timeInterval time.Duration) *TokenBucket {
 		lastRefillTime: time.Now(),
 	}
 }
-
-// func initializeTokenBucket() *TokenBucket {
-// 	// Podrazumevane vrednosti ukoliko nema konfiguracije
-// 	defaultCapacity := 10
-// 	defaultInterval := 5000 * time.Millisecond
-
-// 	// Postavljamo podrazumevane vrednosti
-// 	config := Config{
-// 		Capacity:     defaultCapacity,
-// 		TimeInterval: defaultInterval,
-// 	}
-
-// 	// var config Config
-// 	configData, err := os.ReadFile("config tokenBucket.json")
-// 	if err != nil {
-// 		log.Fatal(err)
-// 	}
-
-// 	err = json.Unmarshal(configData, &config)
-// 	if err != nil {
-// 		fmt.Println("Konfiguracioni fajl nije pronadjen, koriste se podrazumevane vrednosti.")
-// 	}
-// 	// fmt.Println(config)
-
-// 	// Provera validnosti konfiguracije
-// 	if config.Capacity <= 0 {
-// 		config.Capacity = defaultCapacity
-// 	}
-// 	if config.TimeInterval <= 0 {
-// 		config.TimeInterval = defaultInterval
-// 	}
-
-// 	tokenBucket := NewTokenBucket(config.Capacity, config.TimeInterval)
-
-// 	return tokenBucket
-// }
 
 func initializeTokenBucket() *TokenBucket {
 	// Učitaj konfiguraciju iz globalnog config-a
@@ -87,7 +47,7 @@ func (tb *TokenBucket) StartRefill() {
 	}()
 }
 
-func (tb *TokenBucket) Consume() bool {
+func (tb *TokenBucket) Consume(walFactory *wal.WAL, memtable *memtableStructures.MemTableManager, lruCache *lruCache.LRUCache) bool {
 	// Check if the time interval has passed since the last refill
 	if time.Since(tb.lastRefillTime) >= tb.timeInterval {
 		// Refill the token bucket to its maximum capacity
@@ -105,53 +65,10 @@ func (tb *TokenBucket) Consume() bool {
 		return true
 	}
 	fmt.Println("No tokens available.")
+
+	value := fmt.Sprintf("%d;%s", tb.tokens, tb.lastRefillTime.Format(time.RFC3339))
+	systemOps.SystemPut(walFactory, memtable, lruCache, config.TokenBucketStateKey, value)
 	return false
-}
-
-// Save state to file
-func (tb *TokenBucket) SaveState(filename string) error {
-	state := map[string]interface{}{
-		"token_bucket_user": map[string]interface{}{
-			"tokens":           tb.tokens,
-			"last_refill_time": tb.lastRefillTime.Format(time.RFC3339),
-		},
-	}
-	data, err := json.Marshal(state)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(filename, data, 0644)
-}
-
-func (tb *TokenBucket) LoadState(filename string) error {
-	// Load data from file
-	data, err := os.ReadFile(filename)
-	if err != nil {
-		return err
-	}
-
-	// Parse JSON data into a map
-	state := map[string]interface{}{}
-	err = json.Unmarshal(data, &state)
-	if err != nil {
-		return err
-	}
-
-	// Retrieve data for "token_bucket_user"
-	userState, ok := state["token_bucket_user"].(map[string]interface{})
-	if !ok {
-		return fmt.Errorf("invalid state format: missing token_bucket_user")
-	}
-
-	// Set values in TokenBucket
-	tb.tokens = int(userState["tokens"].(float64))
-	lastRefillTime, err := time.Parse(time.RFC3339, userState["last_refill_time"].(string))
-	if err != nil {
-		return err
-	}
-	tb.lastRefillTime = lastRefillTime
-
-	return nil
 }
 
 func userConfig(defaultCapacity int, defaultInterval time.Duration) (int, time.Duration) {

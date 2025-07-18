@@ -3,11 +3,13 @@ package console
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Vujovic0/NASP2024/config"
 	"github.com/Vujovic0/NASP2024/lruCache"
 	"github.com/Vujovic0/NASP2024/memtableStructures"
 	"github.com/Vujovic0/NASP2024/ssTable"
+	"github.com/Vujovic0/NASP2024/tokenBucket"
 	"github.com/Vujovic0/NASP2024/wal"
 )
 
@@ -31,6 +33,7 @@ func Start() {
 
 	config.LoadConfig()
 
+	tokenBucket := tokenBucket.NewTokenBucket(config.TokensNum, time.Duration(config.ResetingIntervalMs)*time.Millisecond)
 	lruCacheFactory := lruCache.NewLRUCache(config.CacheSize)
 
 	walFactory := wal.NewWAL(config.GlobalBlockSize, config.BlocksInSegment)
@@ -87,16 +90,16 @@ func Start() {
 		switch input {
 		case 1:
 
-			Put(walFactory, memtable, lruCacheFactory)
+			Put(walFactory, memtable, lruCacheFactory, tokenBucket)
 		case 2:
-			Get(lruCacheFactory, memtable)
+			Get(lruCacheFactory, memtable, tokenBucket)
 		case 3:
-			Delete(walFactory, memtable, lruCacheFactory)
+			Delete(walFactory, memtable, lruCacheFactory, tokenBucket)
 		case 4:
 			fmt.Println("--ABLE FUNCTIONS--\nPUT - putting key:value pair into the program\nGET - geting the value based on the given key\nDELETE - deleting the key along side it's value")
 			fmt.Println("AGREEMENT: Pair key:value from the perspective of the user are both in type string, but after the input, program restore the value into binary form.\n ...")
 		case 5:
-			LoadProbabilisticConsole(walFactory, memtable, lruCacheFactory)
+			LoadProbabilisticConsole(walFactory, memtable, lruCacheFactory, tokenBucket)
 		case 0:
 			fmt.Println("Exiting...")
 			return
@@ -114,10 +117,18 @@ func PrintPrefixError() {
 	fmt.Println("sm_ - SimHash")
 }
 
-func Put(walFactory *wal.WAL, mtm *memtableStructures.MemTableManager, lruCache *lruCache.LRUCache) (string, string) {
+func Put(walFactory *wal.WAL, mtm *memtableStructures.MemTableManager, lruCache *lruCache.LRUCache, tokenBucket *tokenBucket.TokenBucket) (string, string) {
+	if !tokenBucket.Consume(walFactory, mtm, lruCache) {
+		fmt.Println("Rate limit exceeded. Please wait before next operation.")
+		return "", ""
+	}
 	fmt.Println("Enter the key: ")
 	var inputKey string
 	fmt.Scan(&inputKey)
+	if inputKey == config.TokenBucketStateKey {
+		fmt.Println("Error: This key is reserved for system use and cannot be accessed by users.")
+		return "", ""
+	}
 	fmt.Println("Enter the value: ")
 	var inputValue string
 	fmt.Scan(&inputValue)
@@ -161,10 +172,18 @@ func FindValue(inputKey string, lruCache *lruCache.LRUCache, memtableMenager *me
 	return []byte(""), 0
 }
 
-func Get(lruCache *lruCache.LRUCache, memtableMenager *memtableStructures.MemTableManager) {
+func Get(lruCache *lruCache.LRUCache, memtableMenager *memtableStructures.MemTableManager, tokenBucket *tokenBucket.TokenBucket) {
+	if !tokenBucket.Consume(nil, memtableMenager, lruCache) {
+		fmt.Println("Rate limit exceeded. Please wait before next operation.")
+		return
+	}
 	fmt.Println("Enter the key:")
 	var inputKey string
 	fmt.Scan(&inputKey)
+	if inputKey == config.TokenBucketStateKey {
+		fmt.Println("Error: This key is reserved for system use and cannot be accessed by users.")
+		return
+	}
 	value, foundCase := FindValue(inputKey, lruCache, memtableMenager)
 	switch foundCase {
 	case 0:
@@ -183,10 +202,18 @@ func Get(lruCache *lruCache.LRUCache, memtableMenager *memtableStructures.MemTab
 	}
 }
 
-func Delete(walFactory *wal.WAL, mtm *memtableStructures.MemTableManager, lruCache *lruCache.LRUCache) {
+func Delete(walFactory *wal.WAL, mtm *memtableStructures.MemTableManager, lruCache *lruCache.LRUCache, tokenBucket *tokenBucket.TokenBucket) {
+	if !tokenBucket.Consume(walFactory, mtm, lruCache) {
+		fmt.Println("Rate limit exceeded. Please wait before next operation.")
+		return
+	}
 	fmt.Println("Enter the key:")
 	var inputKey string
 	fmt.Scan(&inputKey)
+	if inputKey == config.TokenBucketStateKey {
+		fmt.Println("Error: This key is reserved for system use and cannot be accessed by users.")
+		return
+	}
 	// HERE WE NEED TO GET THE VALUE BASED ON THE KEY ALONGSIDE DELETING BOTH FROM MEMORY AND DISK IF IT'S PERMANENT (?)
 	// MISSING THE APPROVE FROM WAL, DATA NEED TO BE SEND TO THE WAL WERE IT WILL BE STORED TILL DISMISED TO THE DISK
 	offset, err := (*walFactory).WriteLogEntry(inputKey, []byte(""), false)
