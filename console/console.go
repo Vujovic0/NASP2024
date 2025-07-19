@@ -113,7 +113,7 @@ func Start() {
 		fmt.Println("WAL was inizialized successfully")
 	}
 	for {
-		fmt.Print("--Main menu--\n 1. PUT\n 2. GET\n 3. DELETE\n 4. INFO\n 5. PROBABILISTIC STRUCTURES\n 6. CONFIGURATION CHANGE\n 0. EXIT\n Choose one of the options above: ")
+		fmt.Print("--Main menu--\n 1. PUT\n 2. GET\n 3. DELETE\n 4. INFO\n 5. PROBABILISTIC STRUCTURES\n 0. EXIT\n Choose one of the options above: ")
 		var input int
 		_, error := fmt.Scan(&input)
 		if error != nil {
@@ -133,8 +133,6 @@ func Start() {
 			fmt.Println("AGREEMENT: Pair key:value from the perspective of the user are both in type string, but after the input, program restore the value into binary form.\n ...")
 		case 5:
 			LoadProbabilisticConsole(walFactory, memtable, lruCacheFactory, tokenBucket)
-		case 6:
-			ChangeConfigurationMenu(walFactory, memtable, lruCacheFactory, tokenBucket)
 		case 0:
 			fmt.Println("Exiting...")
 			return
