@@ -118,11 +118,9 @@ func CreateNewInstance(typeInput int, wal *wal.WAL, memtable *memtableStructures
 		fmt.Println("Rate limit exceeded. Please wait before next operation.")
 		return
 	}
-	fmt.Println("Enter the name of new instance: ")
 	var instanceName string
-	_, error := fmt.Scan(&instanceName)
-	if error != nil {
-		fmt.Println("Error while loading input name...")
+	instanceName = InputValue("Enter the name of new instance: ")
+	if instanceName == "" {
 		return
 	}
 	if hasProbabilisticPrefix(instanceName) {
@@ -187,11 +185,9 @@ func DeleteExistingInstance(typeInput int, wal *wal.WAL, memtable *memtableStruc
 		fmt.Println("Rate limit exceeded. Please wait before next operation.")
 		return
 	}
-	fmt.Println("Enter the name of instance you want to delete: ")
 	var instanceName string
-	_, error := fmt.Scan(&instanceName)
-	if error != nil {
-		fmt.Println("Error while loading input name...")
+	instanceName = InputValue("Enter the name of instance you want to delete: ")
+	if instanceName == "" {
 		return
 	}
 	if hasProbabilisticPrefix(instanceName) {
@@ -220,27 +216,31 @@ func DeleteExistingInstance(typeInput int, wal *wal.WAL, memtable *memtableStruc
 
 func ReadInputValues() []string {
 	var stringovi []string
-	fmt.Print("Enter a line: ")
-	reader := bufio.NewReader(os.Stdin)
-	// Flush any leftover newlines from input buffer
 	for {
-		b, err := reader.Peek(1)
+		fmt.Print("Enter a value you want to input: ")
+		reader := bufio.NewReader(os.Stdin)
+		// CLEANING LEFTOVERS FROM LAST INPUT
+		for {
+			b, err := reader.Peek(1)
+			if err != nil {
+				break
+			}
+			if b[0] == '\n' || b[0] == '\r' {
+				_, _ = reader.ReadByte()
+			} else {
+				break
+			}
+		}
+		line, err := reader.ReadString('\n')
 		if err != nil {
+			fmt.Println("Error reading input:", err)
+			return nil
+		}
+		if len(line) == 0 {
 			break
 		}
-		if b[0] == '\n' || b[0] == '\r' {
-			_, _ = reader.ReadByte()
-		} else {
-			break
-		}
+		stringovi = append(stringovi, strings.TrimRight(line, "\r\n"))
 	}
-	line, err := reader.ReadString('\n')
-	if err != nil {
-		fmt.Println("Error reading input:", err)
-		return nil
-	}
-	// Remove the trailing newline
-	stringovi = append(stringovi, strings.TrimRight(line, "\r\n"))
 	return stringovi
 }
 
@@ -249,11 +249,9 @@ func AddElements(typeInput int, wal *wal.WAL, memtable *memtableStructures.MemTa
 		fmt.Println("Rate limit exceeded. Please wait before next operation.")
 		return
 	}
-	fmt.Println("Enter the name of instance you want to access: ")
 	var instanceName string
-	_, error := fmt.Scan(&instanceName)
-	if error != nil {
-		fmt.Println("Error while loading input name...")
+	instanceName = InputValue("Enter the name of instance you want to access: ")
+	if instanceName == "" {
 		return
 	}
 	if hasProbabilisticPrefix(instanceName) {
@@ -336,11 +334,9 @@ func AddElements(typeInput int, wal *wal.WAL, memtable *memtableStructures.MemTa
 }
 
 func BloomFilterSpecific(memtable *memtableStructures.MemTableManager, lruCache *lruCache.LRUCache) {
-	fmt.Println("Enter the name of instance you want to access: ")
 	var instanceName string
-	_, error := fmt.Scan(&instanceName)
-	if error != nil {
-		fmt.Println("Error while loading input name...")
+	instanceName = InputValue("Enter the name of instance you want to access: ")
+	if instanceName == "" {
 		return
 	}
 	if hasProbabilisticPrefix(instanceName) {
@@ -360,11 +356,9 @@ func BloomFilterSpecific(memtable *memtableStructures.MemTableManager, lruCache 
 	}
 	var inputValue string
 	for {
-		fmt.Println("Enter value you want check in BloomFilter: ")
-		_, error := fmt.Scan(&inputValue)
-		if error != nil {
-			fmt.Println("Error while loading input name, try again")
-			continue
+		inputValue = InputValue("Enter value you want check in BloomFilter: ")
+		if inputValue == "" {
+			return
 		}
 		found := bloomFilter.SearchData(bf, inputValue)
 		if found {
@@ -372,12 +366,70 @@ func BloomFilterSpecific(memtable *memtableStructures.MemTableManager, lruCache 
 		} else {
 			fmt.Println("Value {" + inputValue + "} is not found in {" + instanceName + "} instance of BloomFilter")
 		}
-		break
+		return
 	}
 }
 
 func CMSSpecific(memtable *memtableStructures.MemTableManager, lruCache *lruCache.LRUCache) {
+	var instanceName string
+	instanceName = InputValue("Enter the name of instance you want to access: ")
+	if instanceName == "" {
+		return
+	}
+	if hasProbabilisticPrefix(instanceName) {
+		PrintPrefixError()
+		return
+	}
+	instanceName = AddPrefix(2, instanceName)
+	foundBytes, found := FindValue(instanceName, lruCache, memtable)
+	if found == 0 {
+		fmt.Println("Coulnd't find BloomFilter instance with provided name!")
+		return
+	}
+	cmsObject, err := cms.DeserializeFromBytes(foundBytes)
+	if err != nil {
+		fmt.Println("Error while loading CountMinSketch instance!")
+		return
+	}
+	var inputValue string
+	for {
+		inputValue = InputValue("Enter value you want check in CountMinSketch: ")
+		if inputValue == "" {
+			return
+		}
+		count := cms.SearchData(cmsObject, inputValue)
+		if count != 0 {
+			fmt.Printf("Value {"+inputValue+"} is found in {"+instanceName+"} instance of CountMinSketch {%d} times\n", count)
+		} else {
+			fmt.Println("Value {" + inputValue + "} is not found in {" + instanceName + "} instance of CountMinSketch")
+		}
+		return
+	}
+}
 
+func HLLSpecific(memtable *memtableStructures.MemTableManager, lruCache *lruCache.LRUCache) {
+	var instanceName string
+	instanceName = InputValue("Enter the name of instance you want to access: ")
+	if instanceName == "" {
+		return
+	}
+	if hasProbabilisticPrefix(instanceName) {
+		PrintPrefixError()
+		return
+	}
+	instanceName = AddPrefix(3, instanceName)
+	foundBytes, found := FindValue(instanceName, lruCache, memtable)
+	if found == 0 {
+		fmt.Println("Coulnd't find HyperLogLog instance with provided name!")
+		return
+	}
+	hll, err := hyperloglog.DeserializeFromBytes(foundBytes)
+	if err != nil {
+		fmt.Println("Error while loading HyperLogLog instance!")
+		return
+	}
+	cardinality := hyperloglog.GetNumberOfDifferentValues(hll)
+	fmt.Printf("Cardinality of HyperLogLog instance {"+instanceName+"} is {%d}\n", cardinality)
 }
 
 func SpecificOperation(typeInput int, memtable *memtableStructures.MemTableManager, lruCache *lruCache.LRUCache) {
@@ -386,6 +438,8 @@ func SpecificOperation(typeInput int, memtable *memtableStructures.MemTableManag
 		BloomFilterSpecific(memtable, lruCache)
 	case 2:
 		CMSSpecific(memtable, lruCache)
+	case 3:
+		HLLSpecific(memtable, lruCache)
 	}
 }
 

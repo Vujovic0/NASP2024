@@ -1,7 +1,9 @@
 package console
 
 import (
+	"bufio"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -27,6 +29,37 @@ func hasProbabilisticPrefix(inputKey string) bool {
 		return true
 	}
 	return false
+}
+
+func InputValue(inputMessage string) string {
+	var input string
+	for {
+		fmt.Println(inputMessage)
+		reader := bufio.NewReader(os.Stdin)
+		// CLEANING LEFTOVERS FROM LAST INPUT
+		for {
+			b, err := reader.Peek(1)
+			if err != nil {
+				break
+			}
+			if b[0] == '\n' || b[0] == '\r' {
+				_, _ = reader.ReadByte()
+			} else {
+				break
+			}
+		}
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			fmt.Println("Error reading input:", err)
+			fmt.Println("Try again.")
+			continue
+		}
+		if len(line) == 0 {
+			return ""
+		}
+		break
+	}
+	return input
 }
 
 func Start() {
@@ -124,16 +157,18 @@ func Put(walFactory *wal.WAL, mtm *memtableStructures.MemTableManager, lruCache 
 		fmt.Println("Rate limit exceeded. Please wait before next operation.")
 		return "", ""
 	}
-	fmt.Println("Enter the key: ")
-	var inputKey string
-	fmt.Scan(&inputKey)
+	inputKey := InputValue("Enter the key: ")
+	if inputKey == "" {
+		return "", ""
+	}
 	if inputKey == config.TokenBucketStateKey {
 		fmt.Println("Error: This key is reserved for system use and cannot be accessed by users.")
 		return "", ""
 	}
-	fmt.Println("Enter the value: ")
-	var inputValue string
-	fmt.Scan(&inputValue)
+	inputValue := InputValue("Enter the value: ")
+	if inputValue == "" {
+		return "", ""
+	}
 	if hasProbabilisticPrefix(inputKey) {
 		PrintPrefixError()
 		return "", ""
@@ -179,9 +214,10 @@ func Get(lruCache *lruCache.LRUCache, memtableMenager *memtableStructures.MemTab
 		fmt.Println("Rate limit exceeded. Please wait before next operation.")
 		return
 	}
-	fmt.Println("Enter the key:")
-	var inputKey string
-	fmt.Scan(&inputKey)
+	inputKey := InputValue("Enter the key: ")
+	if inputKey == "" {
+		return
+	}
 	if inputKey == config.TokenBucketStateKey {
 		fmt.Println("Error: This key is reserved for system use and cannot be accessed by users.")
 		return
@@ -209,9 +245,10 @@ func Delete(walFactory *wal.WAL, mtm *memtableStructures.MemTableManager, lruCac
 		fmt.Println("Rate limit exceeded. Please wait before next operation.")
 		return
 	}
-	fmt.Println("Enter the key:")
-	var inputKey string
-	fmt.Scan(&inputKey)
+	inputKey := InputValue("Enter the key: ")
+	if inputKey == "" {
+		return
+	}
 	if inputKey == config.TokenBucketStateKey {
 		fmt.Println("Error: This key is reserved for system use and cannot be accessed by users.")
 		return
