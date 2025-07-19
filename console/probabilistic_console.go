@@ -1,7 +1,9 @@
 package console
 
 import (
+	"bufio"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/Vujovic0/NASP2024/config"
@@ -217,13 +219,29 @@ func DeleteExistingInstance(typeInput int, wal *wal.WAL, memtable *memtableStruc
 }
 
 func ReadInputValues() []string {
-	var input string
-	fmt.Print("Enter values separated by space: ")
-
-	fmt.Scanf("%[^\n]", &input)
-
-	values := strings.Fields(input)
-	return values
+	var stringovi []string
+	fmt.Print("Enter a line: ")
+	reader := bufio.NewReader(os.Stdin)
+	// Flush any leftover newlines from input buffer
+	for {
+		b, err := reader.Peek(1)
+		if err != nil {
+			break
+		}
+		if b[0] == '\n' || b[0] == '\r' {
+			_, _ = reader.ReadByte()
+		} else {
+			break
+		}
+	}
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		fmt.Println("Error reading input:", err)
+		return nil
+	}
+	// Remove the trailing newline
+	stringovi = append(stringovi, strings.TrimRight(line, "\r\n"))
+	return stringovi
 }
 
 func AddElements(typeInput int, wal *wal.WAL, memtable *memtableStructures.MemTableManager, lruCache *lruCache.LRUCache, tokenBucket *tokenBucket.TokenBucket) {
@@ -358,10 +376,16 @@ func BloomFilterSpecific(memtable *memtableStructures.MemTableManager, lruCache 
 	}
 }
 
+func CMSSpecific(memtable *memtableStructures.MemTableManager, lruCache *lruCache.LRUCache) {
+
+}
+
 func SpecificOperation(typeInput int, memtable *memtableStructures.MemTableManager, lruCache *lruCache.LRUCache) {
 	switch typeInput {
 	case 1:
 		BloomFilterSpecific(memtable, lruCache)
+	case 2:
+		CMSSpecific(memtable, lruCache)
 	}
 }
 

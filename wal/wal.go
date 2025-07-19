@@ -549,6 +549,9 @@ func (wal *WAL) LoadWALLogs(memtable *memtableStructures.MemTableManager) {
 				var offset int
 				if fileIndex == startingFileIndex {
 					offset = int(loadingOffset)
+					if offset < 9 {
+						offset = 9
+					}
 				} else {
 					offset = 9 // SO WE CAN SKIP HEADER
 				}
