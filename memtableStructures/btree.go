@@ -322,6 +322,11 @@ func (treeNode *BTreeNode) insertNonFull(element Element) {
 			treeNode.values[i+1] = treeNode.values[i]
 			i--
 		}
+		if i >= 0 && treeNode.keys[i] == element.Key {
+			// Kljuc vec postoji, radimo update
+			treeNode.values[i] = element
+			return
+		}
 		treeNode.keys[i+1] = element.Key
 		treeNode.values[i+1] = element
 		treeNode.n += 1

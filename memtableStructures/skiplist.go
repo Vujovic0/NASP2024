@@ -58,6 +58,9 @@ func (s *SkipList) insert(key string, value []byte, timestamp int64, tombstone b
 	// Provera da li vrednost vec postoji
 	if current.next[0] != nil && current.next[0].value.Key == key {
 		// Ako vrednost vec postoji necemo umetati duplikat
+		current.next[0].value.Value = value
+		current.next[0].value.Timestamp = timestamp
+		current.next[0].value.Tombstone = tombstone
 		return
 	}
 

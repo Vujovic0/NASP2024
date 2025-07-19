@@ -30,7 +30,16 @@ func hashFunction(key string, size int) uint {
 }
 
 func (hm *HashMap) insert(element Element) {
+	existingElement, found := hm.search(element.Key)
+	if found {
+		// Update postojeci element
+		existingElement.Value = element.Value
+		existingElement.Timestamp = element.Timestamp
+		existingElement.Tombstone = element.Tombstone
+		return
+	}
 
+	// Dodajemo novi element ako ne postoji
 	// Racunamo index gde cemo smestiti nas novi kljuc-vrednost par
 	index := hashFunction(element.Key, hm.size)
 

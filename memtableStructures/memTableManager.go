@@ -44,8 +44,8 @@ func (mtm *MemTableManager) Search(key string) (*Element, bool) {
 	if found {
 		return elem, true
 	}
-	for _, mt := range mtm.immutables {
-		elem, found := mt.Search(key)
+	for i := len(mtm.immutables) - 1; i >= 0; i-- {
+		elem, found := mtm.immutables[i].Search(key)
 		if found {
 			return elem, true
 		}
