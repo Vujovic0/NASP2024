@@ -63,31 +63,20 @@ func NewHyperLogLog(p uint8) *HyperLogLog {
 	return &HyperLogLog{p: p, m: m, register: register}
 }
 
-func MakeHyperLoLog(p uint8, array []string) *HyperLogLog {
+func MakeHyperLogLog(p uint8) *HyperLogLog {
 	hll := NewHyperLogLog(p)
-	if array != nil {
-		UpdateHyperLogLog(hll, p, array)
-	}
 	return hll
 }
 
-func UpdateHyperLogLog(hll *HyperLogLog, p uint8, array []string) *HyperLogLog {
-	var i int = int(p)
-	if i < HLL_MIN_PRECISION || i > HLL_MAX_PRECISION { // CHECKING THE VALIDITY OF PRECISION
-		fmt.Println("Precision is not valid, choose value in the range: ", HLL_MIN_PRECISION, " to ", HLL_MAX_PRECISION, "!")
-		return hll
-	}
-	for _, data := range array {
-		h := fnv.New64a()
-		h.Write([]byte(data))
-		hashValue := h.Sum64()
-		newP := uint64(p)
-		bucket := firstKbits(hashValue, newP) % hll.m
-		value := trailingZeroBits(hashValue)
-		valueUint8 := uint8(value)
-		if hll.register[bucket] < valueUint8 {
-			hll.register[bucket] = valueUint8
-		}
+func UpdateHyperLogLog(hll *HyperLogLog, word string) *HyperLogLog {
+	h := fnv.New64a()
+	h.Write([]byte(word))
+	hashValue := h.Sum64()
+	bucket := firstKbits(hashValue, uint64(hll.p)) % hll.m
+	value := trailingZeroBits(hashValue)
+	valueUint8 := uint8(value)
+	if hll.register[bucket] < valueUint8 {
+		hll.register[bucket] = valueUint8
 	}
 	return hll
 }
