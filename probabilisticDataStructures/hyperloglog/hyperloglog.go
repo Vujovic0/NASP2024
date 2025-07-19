@@ -68,9 +68,11 @@ func MakeHyperLogLog(p uint8) *HyperLogLog {
 	return hll
 }
 
-func UpdateHyperLogLog(hll *HyperLogLog, word string) *HyperLogLog {
+func UpdateHyperLogLog(hll *HyperLogLog, words []string) *HyperLogLog {
 	h := fnv.New64a()
-	h.Write([]byte(word))
+	for i := 0; i < len(words); i++ {
+		h.Write([]byte(words[i]))
+	}
 	hashValue := h.Sum64()
 	bucket := firstKbits(hashValue, uint64(hll.p)) % hll.m
 	value := trailingZeroBits(hashValue)

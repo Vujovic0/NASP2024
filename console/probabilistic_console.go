@@ -163,7 +163,7 @@ func CreateNewInstance(typeInput int, wal *wal.WAL, memtable *memtableStructures
 		return
 	case 3:
 		p := HyperLogLogParametersInput()
-		hll := hyperloglog.MakeHyperLoLog(uint8(p), nil)
+		hll := hyperloglog.MakeHyperLogLog(uint8(p))
 		hllBytes, err := hyperloglog.SerializeToBytes(hll)
 		if err != nil {
 			fmt.Println("Error happend while serializing HyperLogLog! Returning...")
@@ -315,7 +315,7 @@ func AddElements(typeInput int, wal *wal.WAL, memtable *memtableStructures.MemTa
 			fmt.Println("Error while deserializing instance of HyperLogLog!")
 			return
 		}
-		hll = hyperloglog.UpdateHyperLogLog(hll, 10, inputValues)
+		hll = hyperloglog.UpdateHyperLogLog(hll, inputValues)
 		hllBytes, err := hyperloglog.SerializeToBytes(hll)
 		if err != nil {
 			fmt.Println("Error happend while serializing HyperLogLog! Returning...")
