@@ -8,9 +8,9 @@ import (
 
 // Upis stanja token bucket-a (sistemski poziv)
 func SystemPut(walFactory *wal.WAL, mtm *memtableStructures.MemTableManager, lruCache *lruCache.LRUCache, key string, value string) {
-	if walFactory == nil {
-		return
-	}
+	// if walFactory == nil {
+	// 	return
+	// }
 	offset, err := (*walFactory).WriteLogEntry(key, []byte(value), false)
 	if err == nil {
 		mtm.Insert(key, []byte(value), false, walFactory.CurrentFile.Name(), walFactory.CurrentBlock, offset)

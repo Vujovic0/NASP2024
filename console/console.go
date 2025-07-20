@@ -125,7 +125,7 @@ func Start() {
 
 			Put(walFactory, memtable, lruCacheFactory, tokenBucket)
 		case 2:
-			Get(lruCacheFactory, memtable, tokenBucket)
+			Get(lruCacheFactory, memtable, tokenBucket, walFactory)
 		case 3:
 			Delete(walFactory, memtable, lruCacheFactory, tokenBucket)
 		case 4:
@@ -207,8 +207,8 @@ func FindValue(inputKey string, lruCache *lruCache.LRUCache, memtableMenager *me
 	return []byte(""), 0
 }
 
-func Get(lruCache *lruCache.LRUCache, memtableMenager *memtableStructures.MemTableManager, tokenBucket *tokenBucket.TokenBucket) {
-	if !tokenBucket.Consume(nil, memtableMenager, lruCache) {
+func Get(lruCache *lruCache.LRUCache, memtableMenager *memtableStructures.MemTableManager, tokenBucket *tokenBucket.TokenBucket, walFactory *wal.WAL) {
+	if !tokenBucket.Consume(walFactory, memtableMenager, lruCache) {
 		fmt.Println("Rate limit exceeded. Please wait before next operation.")
 		return
 	}
