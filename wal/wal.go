@@ -113,7 +113,7 @@ func (wal *WAL) createFirstOffsetFile() {
 	binary.LittleEndian.PutUint32(result[0:4], nameLen)
 	copy(result[4:4+len(nameBytes)], nameBytes)
 	binary.LittleEndian.PutUint32(result[4+len(nameBytes):8+len(nameBytes)], 0)
-	binary.LittleEndian.PutUint64(result[8+len(nameBytes):], 0)
+	binary.LittleEndian.PutUint64(result[8+len(nameBytes):], 9)
 
 	blockType := make([]byte, 1)
 	blockType[0] = 0
