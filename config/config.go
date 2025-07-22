@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -168,12 +169,19 @@ func comparePreviousToNewConfig(newConfig *Config) {
 	if loadingError {
 		fmt.Println("Error has occured while loading previous configuration!")
 		fmt.Println("Because of potential change of block size")
-		fmt.Println("all old data needs to be deleted.")
+		fmt.Println("All the old data needs to be deleted to continue.")
+		reader := bufio.NewReader(os.Stdin)
 		for {
 			fmt.Println("Do you want to continue? (y/n)")
-			var input string
-			_, _ = fmt.Scan(&input)
+
+			input, err := reader.ReadString('\n')
+			if err != nil {
+				fmt.Println("Error reading input:", err)
+				continue
+			}
+
 			input = strings.TrimSpace(input)
+
 			if input == "y" {
 				err := DeleteOldData()
 				if err != nil {
@@ -182,12 +190,14 @@ func comparePreviousToNewConfig(newConfig *Config) {
 				}
 				break
 			}
+
 			if input == "n" {
 				fmt.Println("Stopping the program.")
 				os.Exit(0)
 				break
 			}
-			fmt.Println("You need to input valid option! (y/n)")
+
+			fmt.Println("Please enter 'y' or 'n'.")
 		}
 	}
 	blockSize := newConfig.BlockManagerCache.BlockSizeB != previousConfig.BlockManagerCache.BlockSizeB
@@ -196,12 +206,19 @@ func comparePreviousToNewConfig(newConfig *Config) {
 		fmt.Println("There is change in data writing parameter!")
 		fmt.Println("(Block size or variable header setting...)")
 		fmt.Println("All the old data needs to be deleted to continue.")
-		fmt.Println("all old data needs to be deleted.")
+		//fmt.Println("all old data needs to be deleted.")
+		reader := bufio.NewReader(os.Stdin)
 		for {
 			fmt.Println("Do you want to continue? (y/n)")
-			var input string
-			_, _ = fmt.Scan(&input)
+
+			input, err := reader.ReadString('\n')
+			if err != nil {
+				fmt.Println("Error reading input:", err)
+				continue
+			}
+
 			input = strings.TrimSpace(input)
+
 			if input == "y" {
 				err := DeleteOldData()
 				if err != nil {
@@ -210,12 +227,14 @@ func comparePreviousToNewConfig(newConfig *Config) {
 				}
 				break
 			}
+
 			if input == "n" {
 				fmt.Println("Stopping the program.")
 				os.Exit(0)
 				break
 			}
-			fmt.Println("You need to input valid option! (y/n)")
+
+			fmt.Println("Please enter 'y' or 'n'.")
 		}
 	}
 }
@@ -234,13 +253,20 @@ func LoadPreviousConfig() *Config {
 	}
 	if loadingError {
 		fmt.Println("Error has occured while loading previous configuration!")
+		fmt.Println("This will result in deletion of old data,")
+		fmt.Println("because of potential change of block size.")
+		reader := bufio.NewReader(os.Stdin)
 		for {
 			fmt.Println("Do you want to load default configuration? (y/n)")
-			fmt.Println("This will result in deletion of old data,")
-			fmt.Println("because of potential change of block size.")
-			var input string
-			_, _ = fmt.Scan(&input)
+
+			input, err := reader.ReadString('\n')
+			if err != nil {
+				fmt.Println("Error reading input:", err)
+				continue
+			}
+
 			input = strings.TrimSpace(input)
+
 			if input == "y" {
 				err := DeleteOldData()
 				if err != nil {
@@ -249,12 +275,14 @@ func LoadPreviousConfig() *Config {
 				}
 				break
 			}
+
 			if input == "n" {
 				fmt.Println("Stopping the program.")
 				os.Exit(0)
 				break
 			}
-			fmt.Println("You need to input valid option! (y/n)")
+
+			fmt.Println("Please enter 'y' or 'n'.")
 		}
 	}
 	return &previousConfig
