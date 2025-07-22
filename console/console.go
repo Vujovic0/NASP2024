@@ -32,10 +32,10 @@ func hasProbabilisticPrefix(inputKey string) bool {
 }
 
 func InputValue(inputMessage string) string {
-	var input string
+	reader := bufio.NewReader(os.Stdin)
 	for {
 		fmt.Println(inputMessage)
-		reader := bufio.NewReader(os.Stdin)
+
 		// CLEANING LEFTOVERS FROM LAST INPUT
 		for {
 			b, err := reader.Peek(1)
@@ -48,18 +48,17 @@ func InputValue(inputMessage string) string {
 				break
 			}
 		}
+
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			fmt.Println("Error reading input:", err)
 			fmt.Println("Try again.")
 			continue
 		}
-		if len(line) == 0 {
-			return ""
-		}
-		break
+
+		line = strings.TrimRight(line, "\r\n") // REMOVING NEW LINE CHARACTERS
+		return line
 	}
-	return input
 }
 
 func Start() {
@@ -72,6 +71,16 @@ func Start() {
 	walFactory := wal.NewWAL(config.GlobalBlockSize, config.BlocksInSegment)
 	memtable := memtableStructures.NewMemTableManager(1)
 	walFactory.LoadWALLogs(memtable)
+
+	/*valueBytes, found := FindValue(strings.Repeat("x", 5000), lruCacheFactory, memtable)
+	if found != 0 {
+		fmt.Println(string(valueBytes))
+	}
+	fmt.Println("aaaaaaaaaaaa")*/
+	/*inputKey := strings.Repeat("x", 5000)
+	inputValue := "value za x" // Still < 1 block
+	(*walFactory).WriteLogEntry(inputKey, []byte(inputValue), false)
+	memtable.Insert(inputKey, []byte(inputValue), false, walFactory.CurrentFile.Name(), walFactory.CurrentBlock, 0)*/
 
 	/*	//Small value
 		inputKey := "shortKey"

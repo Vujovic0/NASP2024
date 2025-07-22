@@ -12,6 +12,7 @@ import (
 	"github.com/Vujovic0/NASP2024/probabilisticDataStructures/bloomFilter"
 	"github.com/Vujovic0/NASP2024/probabilisticDataStructures/cms"
 	"github.com/Vujovic0/NASP2024/probabilisticDataStructures/hyperloglog"
+	"github.com/Vujovic0/NASP2024/simhash"
 	"github.com/Vujovic0/NASP2024/tokenBucket"
 	"github.com/Vujovic0/NASP2024/wal"
 )
@@ -159,6 +160,7 @@ func CreateNewInstance(typeInput int, wal *wal.WAL, memtable *memtableStructures
 			return
 		}
 		memtable.Insert(instanceName, cmsBytes, false, wal.CurrentFile.Name(), wal.CurrentBlock, offset)
+		//lruCache.Put()
 		fmt.Println("New instance of BloCountMinSketchomFilter saved...")
 		return
 	case 3:
@@ -485,6 +487,97 @@ func OperationsMenu(typeInput int, wal *wal.WAL, memtable *memtableStructures.Me
 
 }
 
+func SimHashAddElement(wal *wal.WAL, memtable *memtableStructures.MemTableManager, lruCache *lruCache.LRUCache, tokenBucket *tokenBucket.TokenBucket) {
+	if !tokenBucket.Consume(wal, memtable, lruCache) {
+		fmt.Println("Rate limit exceeded. Please wait before next operation.")
+		return
+	}
+	var instanceName string
+	instanceName = InputValue("Enter the name of new SimHash instance: ")
+	if instanceName == "" {
+		return
+	}
+	if hasProbabilisticPrefix(instanceName) {
+		PrintPrefixError()
+		return
+	}
+	instanceName = AddPrefix(4, instanceName)
+
+	var textValue string
+	textValue = InputValue("Enter the text of new SimHash instance: ")
+	if textValue == "" {
+		return
+	}
+	simHashBytes := simhash.GetFingerPrint(textValue)
+	offset, err := wal.WriteLogEntry(instanceName, simHashBytes[:], false)
+	if err != nil {
+		fmt.Println("There was an error while writing WAL!")
+		return
+	}
+	memtable.Insert(instanceName, simHashBytes[:], false, wal.CurrentFile.Name(), wal.CurrentBlock, offset)
+	// DODAJ DA SE ZAPIS DODAJE U LRU CACHE
+	fmt.Println("Saving SimHash instance successful.")
+}
+
+func SimHashCompareDistance(memtable *memtableStructures.MemTableManager, lruCache *lruCache.LRUCache) {
+	var firstRecord string
+	firstRecord = InputValue("Enter the name of first SimHash instance: ")
+	if firstRecord == "" {
+		return
+	}
+	if hasProbabilisticPrefix(firstRecord) {
+		PrintPrefixError()
+		return
+	}
+	firstRecord = AddPrefix(4, firstRecord)
+
+	var secondRecord string
+	secondRecord = InputValue("Enter the name of second SimHash instance: ")
+	if secondRecord == "" {
+		return
+	}
+	if hasProbabilisticPrefix(secondRecord) {
+		PrintPrefixError()
+		return
+	}
+	secondRecord = AddPrefix(4, secondRecord)
+
+	firstRecordBytes, found := FindValue(firstRecord, lruCache, memtable)
+	if found == 0 {
+		fmt.Println("Couldn't find instance with name: {" + firstRecord + "}")
+		return
+	}
+	secondRecordBytes, found := FindValue(secondRecord, lruCache, memtable)
+	if found == 0 {
+		fmt.Println("Couldn't find instance with name: {" + secondRecord + "}")
+		return
+	}
+	distance := simhash.GetDistanceSimHash([16]byte(firstRecordBytes), [16]byte(secondRecordBytes))
+	fmt.Println("Distance between instances {"+firstRecord+"} and {"+secondRecord+"} is {", distance, "}")
+}
+
+func SimHashOperationsMenu(wal *wal.WAL, memtable *memtableStructures.MemTableManager, lruCache *lruCache.LRUCache, tokenBucket *tokenBucket.TokenBucket) {
+	for {
+		fmt.Print("--SimHash menu--\n 1. Add new instance\n 2. Compare two instances\n 0. Return to main menu\n Choose one of the options above: ")
+		var typeInput int
+		_, error := fmt.Scan(&typeInput)
+		if error != nil {
+			fmt.Println("The input is not integer! ERROR -> ", error)
+			continue
+		}
+		if typeInput == 1 {
+			SimHashAddElement(wal, memtable, lruCache, tokenBucket)
+		} else if typeInput == 2 {
+			SimHashCompareDistance(memtable, lruCache)
+		} else if typeInput == 0 {
+			fmt.Println("Exiting SimHash menu...")
+			return
+		} else {
+			fmt.Println("Your input is invalid!")
+		}
+	}
+}
+
 func LoadProbabilisticConsole(wal *wal.WAL, memtable *memtableStructures.MemTableManager, lruCache *lruCache.LRUCache, tokenBucket *tokenBucket.TokenBucket) {
 	for {
 		fmt.Print("--Probabilistic menu--\n 1. BloomFilter\n 2. CountMinSketch\n 3. HyperLogLog\n 4. SimHash\n 0. Return to main menu\n Choose one of the options above: ")
@@ -497,7 +590,7 @@ func LoadProbabilisticConsole(wal *wal.WAL, memtable *memtableStructures.MemTabl
 		if typeInput > 0 && typeInput < 4 {
 			OperationsMenu(typeInput, wal, memtable, lruCache, tokenBucket)
 		} else if typeInput == 4 {
-			//SimHashOperationsMenu()
+			SimHashOperationsMenu(wal, memtable, lruCache, tokenBucket)
 		} else if typeInput == 0 {
 			fmt.Println("Exiting probabilistic menu...")
 			return
