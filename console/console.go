@@ -188,7 +188,7 @@ func Put(walFactory *wal.WAL, mtm *memtableStructures.MemTableManager, lruCache 
 	offset, err := (*walFactory).WriteLogEntry(inputKey, []byte(inputValue), false)
 	if err == nil {
 		mtm.Insert(inputKey, []byte(inputValue), false, walFactory.CurrentFile.Name(), walFactory.CurrentBlock, offset)
-		lruCache.Put(inputKey, inputValue)
+		lruCache.Put(inputKey, []byte(inputValue))
 		fmt.Println("Uspesno unet WAL")
 	} else {
 		fmt.Println("Neuspesno unet WAL")
@@ -200,7 +200,7 @@ func Put(walFactory *wal.WAL, mtm *memtableStructures.MemTableManager, lruCache 
 func FindValue(inputKey string, lruCache *lruCache.LRUCache, memtableMenager *memtableStructures.MemTableManager) ([]byte, int) {
 	element, found := memtableMenager.Search(inputKey)
 	if found {
-		lruCache.Put(inputKey, string(element.Value))
+		lruCache.Put(inputKey, element.Value)
 		return element.Value, 1
 	}
 	value, found := lruCache.Get(inputKey)
@@ -210,10 +210,10 @@ func FindValue(inputKey string, lruCache *lruCache.LRUCache, memtableMenager *me
 	}
 	valueBytes := ssTable.SearchAll([]byte(inputKey), false)
 	if len(valueBytes) > 0 {
-		lruCache.Put(inputKey, value)
+		lruCache.Put(inputKey, valueBytes)
 		return element.Value, 3
 	}
-	return []byte(""), 0
+	return []byte{}, 0
 }
 
 func Get(lruCache *lruCache.LRUCache, memtableMenager *memtableStructures.MemTableManager, tokenBucket *tokenBucket.TokenBucket, walFactory *wal.WAL) {

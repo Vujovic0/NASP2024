@@ -28,7 +28,6 @@ func AddPrefix(typeInput int, inputName string) string {
 	case 4:
 		return config.SimHashPrefix + inputName
 	}
-	// DODAJ NEKI BOLJI RETURN
 	return ""
 }
 
@@ -476,7 +475,6 @@ func OperationsMenu(typeInput int, wal *wal.WAL, memtable *memtableStructures.Me
 			AddElements(typeInput, wal, memtable, lruCache, tokenBucket)
 		case 4:
 			SpecificOperation(typeInput, memtable, lruCache)
-			// OPERACIJA SPECIFIČNA TIPU
 		case 0:
 			fmt.Println("Returning to probabilistic menu...")
 			return
@@ -516,6 +514,7 @@ func SimHashAddElement(wal *wal.WAL, memtable *memtableStructures.MemTableManage
 	}
 	memtable.Insert(instanceName, simHashBytes[:], false, wal.CurrentFile.Name(), wal.CurrentBlock, offset)
 	// DODAJ DA SE ZAPIS DODAJE U LRU CACHE
+	lruCache.Put(instanceName, simHashBytes[:])
 	fmt.Println("Saving SimHash instance successful.")
 }
 
