@@ -28,12 +28,11 @@ func (le LogEntry) String() string {
 }
 
 type WAL struct {
-	walNames         []string // NAMES OF ALL WALx.LOG
-	blockSize        int      //
-	segmentSize      int      // HOW MANY BLOCKS WE HAVE IN ONE FILE
-	CurrentFile      *os.File // POINTER TO A FILE THAT WE ARE CURRENTLY USING
-	CurrentBlock     int      // OFFSET WHERE WE WRITE
-	minimumEntrySize int      // HELPER ATTRIBUTE FOR PADDING
+	walNames     []string // NAMES OF ALL WALx.LOG
+	blockSize    int      //
+	segmentSize  int      // HOW MANY BLOCKS WE HAVE IN ONE FILE
+	CurrentFile  *os.File // POINTER TO A FILE THAT WE ARE CURRENTLY USING
+	CurrentBlock int      // OFFSET WHERE WE WRITE
 }
 
 // OFFSET.BIN BLOCK DATA CONTAINS:
@@ -46,16 +45,9 @@ type WAL struct {
 func NewWAL(blockSize int, segmentSize int) *WAL {
 	wal := new(WAL)
 
-	//fileIndex, blockNumber, logOffset := LoadOffset()
-
-	// DODAJ DA SE PROCITANI OFFSET UBACUJE U WAL
-	//wal.walNames = namesOfWals
 	wal.segmentSize = segmentSize
 	wal.blockSize = blockSize
 	wal.CurrentBlock = 0
-	//wal.currentWalName = namesOfWals[len(namesOfWals)-1]
-	// DODAJ DA JE CURRENTWAL POKAZIVAČ NA OS.FILE
-	wal.minimumEntrySize = 35
 	offsetFilePath := "./wal/offset.bin"
 
 	file, err := os.OpenFile(offsetFilePath, os.O_RDONLY, 066)
@@ -69,7 +61,7 @@ func NewWAL(blockSize int, segmentSize int) *WAL {
 	}
 
 	wal.walNames, wal.CurrentFile, _ = getWALFiles("./wal/wals/")
-	fmt.Print(wal.walNames)
+	// sfmt.Print(wal.walNames)
 	return wal
 }
 
@@ -98,7 +90,7 @@ func getWALFiles(folderPath string) ([]string, *os.File, error) {
 
 	file, err := os.OpenFile(lastFilePath, os.O_RDWR|os.O_CREATE, 0666)
 	if err != nil {
-		return fileNames, nil, fmt.Errorf("failed to open last WAL file: %w", err)
+		return fileNames, nil, fmt.Errorf("Failed to open last WAL file: %w", err)
 	}
 
 	return fileNames, file, nil
@@ -113,7 +105,7 @@ func (wal *WAL) createFirstOffsetFile() {
 	binary.LittleEndian.PutUint32(result[0:4], nameLen)
 	copy(result[4:4+len(nameBytes)], nameBytes)
 	binary.LittleEndian.PutUint32(result[4+len(nameBytes):8+len(nameBytes)], 0)
-	binary.LittleEndian.PutUint64(result[8+len(nameBytes):], 9)
+	binary.LittleEndian.PutUint64(result[8+len(nameBytes):], 0)
 
 	blockType := make([]byte, 1)
 	blockType[0] = 0
@@ -152,7 +144,7 @@ func (wal *WAL) DeserializeOffsetFile() (string, uint32, uint64) {
 	name := string(blockData[13 : 13+nameLen])
 	blockIdx := binary.LittleEndian.Uint32(blockData[13+nameLen : 17+nameLen])
 	logOffset := binary.LittleEndian.Uint64(blockData[17+nameLen:])
-	fmt.Println("Učitavanje offseta")
+	// fmt.Println("Učitavanje offseta")
 	return name, blockIdx, logOffset
 
 }
@@ -246,12 +238,10 @@ func (wal *WAL) WriteLogEntryType0(logEntryBytes []byte, logSizeNeeded int) (int
 	}
 
 	if currentBlock.GetType() == 0 { // IF CURRENT BLOCK IS FILLED WITH THE END OF THE OLDER LOG
-		// PROMENI PROVERU TAKO ŠTO GLEDAŠ KOLIKO JE ZAPISANO U BLOCKU
 		if wal.blockSize-currentBlock.GetSize()-9 >= logSizeNeeded {
 			// WRITING IN THE SAME BLOCK
 			blockType := make([]byte, 1)
 			blockType[0] = 0
-			// DODAJ DA SE VELIČINA PODATAKA PROSLEĐUJE U BUILD BLOCK I RUČNO AŽURIRA
 			newBlockBytes := wal.UpdateBlock(blockType, currentBlock.GetData(), currentBlock.GetSize(), logEntryBytes)
 			block := blockManager.InitBlock(wal.CurrentFile.Name(), uint64(wal.CurrentBlock), newBlockBytes)
 			blockManager.WriteBlock(wal.CurrentFile, block)
@@ -393,23 +383,16 @@ func (log LogEntry) SerializeLogEntry() []byte {
 	binary.LittleEndian.PutUint32(CRCbytes, uint32(CRC))
 	bytes = append(CRCbytes, bytes...)
 
-	DeserializeLogEntry(bytes)
+	//DeserializeLogEntry(bytes)
 
 	return bytes
 }
 
 func DeserializeLogEntry(data []byte) (LogEntry, bool) {
-	if len(data) < 4+8+1+8+8 {
-		return LogEntry{}, false
-	}
 
 	// CRC CHECK FIRST
 	expectedCRC := binary.LittleEndian.Uint32(data[:4])
 	payload := data[4:]
-	actualCRC := crc32.ChecksumIEEE(payload)
-	if expectedCRC != actualCRC {
-		//return LogEntry{}, false
-	}
 
 	offset := 0
 
@@ -448,6 +431,13 @@ func DeserializeLogEntry(data []byte) (LogEntry, bool) {
 	}
 	value := payload[offset : offset+valueLen]
 
+	actualCRC := crc32.ChecksumIEEE(payload[:offset+valueLen])
+
+	if expectedCRC != actualCRC {
+		fmt.Println("There was a CRC error while deserializing WAL...")
+		return LogEntry{}, false
+	}
+
 	return LogEntry{
 		Timestamp: timestamp,
 		Tombstone: tombstone,
@@ -480,14 +470,13 @@ func (wal *WAL) deleteOldWALSegments(fileIndex int) {
 		pathName := "./wal/wals/" + wal.walNames[i]
 		err := deleteFile(pathName)
 		if err != nil {
-			fmt.Println("Continuing old WAL segments deleting...")
+			fmt.Println("There was an error while deleting old WAL segment:", pathName)
 		}
 	}
 }
 
 func (wal *WAL) LoadWALLogs(memtable *memtableStructures.MemTableManager) {
 	// ARRAY THAT'S GOING TO BE USED TO STORE DATA FROM MULTIPLE BLOCKS OR EVEN FILES
-	// DODAJ BRISANJE STARIH WALOVA
 	var wholeBlockData []byte
 	var reading bool
 	loadingSegmentNameFull, loadingBlock, loadingOffset := wal.DeserializeOffsetFile()
@@ -559,7 +548,7 @@ func (wal *WAL) LoadWALLogs(memtable *memtableStructures.MemTableManager) {
 				for {
 					log, isRead := DeserializeLogEntry(block.GetData()[offset:])
 					if isRead {
-						fmt.Println(log)
+						//fmt.Println(log)
 						logSize := CalculateSerializedLogSize(log.Key, log.Value)
 						offset += logSize
 						memtable.Insert(log.Key, log.Value, log.Tombstone, wal.walNames[fileIndex], wal.CurrentBlock, offset)
@@ -570,8 +559,7 @@ func (wal *WAL) LoadWALLogs(memtable *memtableStructures.MemTableManager) {
 				wal.CurrentBlock += 1
 			case 1:
 				if reading {
-					// STAVI GREŠKU ZA TO DA JE VEĆ U PROCESU ČITANJE VIŠEBLOKOVSKOG LOGA,
-					// A OPET SMO NAIŠLI NA BLOCK  TYPE 1
+					fmt.Println("We found another type 1 block while still reading previous one!")
 				}
 				reading = true
 				wholeBlockData = make([]byte, 0)
@@ -579,15 +567,13 @@ func (wal *WAL) LoadWALLogs(memtable *memtableStructures.MemTableManager) {
 				wal.CurrentBlock += 1
 			case 2:
 				if !reading {
-					// STAVI GREŠKU ZA TO DA JE VEĆ U PROCESU ČITANJE VIŠEBLOKOVSKOG LOGA,
-					// A NISMO NAIŠLI NA BLOCK  TYPE 2
+					fmt.Println("We found type 2 block without find type 1 first!")
 				}
 				wholeBlockData = append(wholeBlockData, block.GetData()[9:]...)
 				wal.CurrentBlock += 1
 			case 3:
 				if !reading {
-					// STAVI GREŠKU ZA TO DA JE VEĆ U PROCESU ČITANJE VIŠEBLOKOVSKOG LOGA,
-					// A NISMO NAIŠLI NA BLOCK  TYPE 3
+					fmt.Println("We found type 3 block without find type 1 first!")
 				}
 				wholeBlockData = append(wholeBlockData, block.GetData()[9:]...)
 				reading = false
