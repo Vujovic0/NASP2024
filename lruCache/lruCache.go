@@ -15,7 +15,7 @@ func NewLRUCache(capacity int) *LRUCache {
 	}
 }
 
-func (c *LRUCache) Put(key, value string) {
+func (c *LRUCache) Put(key string, value []byte) {
 	if node, exists := c.entries[key]; exists {
 		node.value = value
 		c.list.moveUp(node)
@@ -34,12 +34,12 @@ func (c *LRUCache) Put(key, value string) {
 	}
 }
 
-func (c *LRUCache) Get(key string) (string, bool) {
+func (c *LRUCache) Get(key string) ([]byte, bool) {
 	if node, exists := c.entries[key]; exists {
 		c.list.moveUp(node)
 		return node.value, true
 	}
-	return "", false
+	return []byte{}, false
 }
 
 func (c *LRUCache) Remove(key string) {

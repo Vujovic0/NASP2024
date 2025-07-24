@@ -4,10 +4,10 @@ type Node struct {
 	previous *Node
 	next     *Node
 	key      string
-	value    string
+	value    []byte
 }
 
-func newNode(key, value string) *Node {
+func newNode(key string, value []byte) *Node {
 	return &Node{key: key, value: value}
 }
 

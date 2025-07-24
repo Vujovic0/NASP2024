@@ -14,7 +14,7 @@ func SystemPut(walFactory *wal.WAL, mtm *memtableStructures.MemTableManager, lru
 	offset, err := (*walFactory).WriteLogEntry(key, []byte(value), false)
 	if err == nil {
 		mtm.Insert(key, []byte(value), false, walFactory.CurrentFile.Name(), walFactory.CurrentBlock, offset)
-		lruCache.Put(key, value)
+		lruCache.Put(key, []byte(value))
 	}
 }
 
@@ -26,7 +26,7 @@ func SystemGet(lruCache *lruCache.LRUCache, memtableMenager *memtableStructures.
 	}
 	value, found := lruCache.Get(key)
 	if found {
-		return value, true
+		return string(value), true
 	}
 	return "", false
 }
