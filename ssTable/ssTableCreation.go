@@ -523,50 +523,6 @@ func writeData(data []byte, file *os.File, blockOffset uint64) uint64 {
 	return blockOffset
 }
 
-func determineBlockType(dataLength int, blockReserve int, firstBlock bool) byte {
-	blockType := 0
-	if dataLength <= blockReserve {
-		if firstBlock {
-			blockType = 0
-		} else {
-			blockType = 3
-		}
-	} else {
-		if firstBlock {
-			blockType = 1
-		} else {
-			blockType = 2
-		}
-	}
-
-	return byte(blockType)
-}
-
-func readData(file *os.File, blockOffset uint64) ([]byte, uint64) {
-	data := make([]byte, 0)
-	for {
-		block := blockManager.ReadBlock(file, blockOffset)
-		data = append(data, block.GetData()[9:9+block.GetSize()]...)
-		if block.GetType() == 0 || block.GetType() == 3 {
-			break
-		}
-		blockOffset++
-	}
-	return data, blockOffset
-}
-
-func fetchFilter(file *os.File, blockOFfset uint64) (*bloomFilter.BloomFilter, uint64) {
-	data, blockOffset := readData(file, blockOFfset)
-	filter, _ := bloomFilter.DeserializeFromBytes(data)
-	return filter, blockOffset
-}
-
-func fetchMerkleTree(file *os.File, blockOFfset uint64) (*MerkleTree, uint64) {
-	data, blockOffset := readData(file, blockOFfset)
-	tree, _ := deserializeMerkleTree(data)
-	return tree, blockOffset
-}
-
 // | CRC 4B | TimeStamp 8B | Tombstone 1B | Keysize 8B | Valuesize 8B | Key... | Value... |
 // KeyOnlyCheck will assure that only the key with its size is serialized
 // func SerializeEntry(key string, value string, tombstone bool, keyOnly bool) []byte {
