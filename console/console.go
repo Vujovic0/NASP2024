@@ -229,6 +229,10 @@ func Get(lruCache *lruCache.LRUCache, memtableMenager *memtableStructures.MemTab
 		return
 	}
 	value, foundCase := FindValue(inputKey, lruCache, memtableMenager)
+	if string(value) == "" {
+		fmt.Println("There is no value for input key {" + inputKey + "}")
+		return
+	}
 	switch foundCase {
 	case 0:
 		fmt.Println("There is no value for input key {" + inputKey + "}")
