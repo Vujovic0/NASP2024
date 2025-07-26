@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/Vujovic0/NASP2024/memtableStructures"
+	"github.com/Vujovic0/NASP2024/ssTable"
 	"github.com/Vujovic0/NASP2024/wal"
 )
 
@@ -68,14 +69,54 @@ func Put(walFactory *wal.WAL) (string, string) {
 	return inputKey, inputValue
 }
 
-func Get() string {
-	fmt.Println("Enter the key:")
-	var inputKey string
-	fmt.Scan(&inputKey)
-	// HERE WE NEED TO IMPLEMENT GETTING THE VALUE (for now only to write it on wal)
-	// MISSING THE APPROVE FROM WAL, DATA NEED TO BE SEND TO THE WAL WERE IT WILL BE STORED TILL DISMISED TO THE DISK
-	var value string
-	return value
+func FindValue(inputKey string, lruCache *lruCache.LRUCache, memtableMenager *memtableStructures.MemTableManager) ([]byte, int) {
+	element, found := memtableMenager.Search(inputKey)
+	if found {
+		lruCache.Put(inputKey, element.Value)
+		return element.Value, 1
+	}
+	value, found := lruCache.Get(inputKey)
+	if found {
+		lruCache.Put(inputKey, value)
+		return value, 2
+	}
+	valueBytes := ssTable.SearchAll([]byte(inputKey), false)
+	if len(valueBytes) > 0 {
+		lruCache.Put(inputKey, valueBytes)
+		return valueBytes, 3
+	}
+	return []byte{}, 0
+}
+
+func Get(lruCache *lruCache.LRUCache, memtableMenager *memtableStructures.MemTableManager, tokenBucket *tokenBucket.TokenBucket, walFactory *wal.WAL) {
+	if !tokenBucket.Consume(walFactory, memtableMenager, lruCache) {
+		fmt.Println("Rate limit exceeded. Please wait before next operation.")
+		return
+	}
+	inputKey := InputValue("Enter the key: ")
+	if inputKey == "" {
+		return
+	}
+	if inputKey == config.TokenBucketStateKey {
+		fmt.Println("Error: This key is reserved for system use and cannot be accessed by users.")
+		return
+	}
+	value, foundCase := FindValue(inputKey, lruCache, memtableMenager)
+	switch foundCase {
+	case 0:
+		fmt.Println("There is no value for input key {" + inputKey + "}")
+	case 1:
+		fmt.Println("Found value {" + string(value) + "} for input key {" + inputKey + "}")
+		fmt.Println("Value founded in Memtable")
+	case 2:
+		fmt.Println("Found value {" + string(value) + "} for input key {" + inputKey + "}")
+		fmt.Println("Value founded in LRU Cache")
+	case 3:
+		fmt.Println("Found value {" + string(value) + "} for input key {" + inputKey + "}")
+		fmt.Println("Value founded in SS Table")
+	case 4:
+		fmt.Println("There was an error for getting value of key {" + inputKey + "}")
+	}
 }
 
 func Delete() {

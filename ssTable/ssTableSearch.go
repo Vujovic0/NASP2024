@@ -598,3 +598,76 @@ func getFooter(file *os.File) *blockManager.Block {
 	footerBlockIndex := math.Ceil(float64(fileSize)/float64(config.GlobalBlockSize)) - 1
 	return blockManager.ReadBlock(file, uint64(footerBlockIndex))
 }
+
+func determineBlockType(dataLength int, blockReserve int, firstBlock bool) byte {
+	blockType := 0
+	if dataLength <= blockReserve {
+		if firstBlock {
+			blockType = 0
+		} else {
+			blockType = 3
+		}
+	} else {
+		if firstBlock {
+			blockType = 1
+		} else {
+			blockType = 2
+		}
+	}
+
+	return byte(blockType)
+}
+
+func readData(file *os.File, blockOffset uint64) ([]byte, uint64) {
+	data := make([]byte, 0)
+	for {
+		block := blockManager.ReadBlock(file, blockOffset)
+		data = append(data, block.GetData()[9:9+block.GetSize()]...)
+		if block.GetType() == 0 || block.GetType() == 3 {
+			break
+		}
+		blockOffset++
+	}
+	return data, blockOffset
+}
+
+func fetchFilter(file *os.File, blockOFfset uint64) (*bloomFilter.BloomFilter, uint64) {
+	data, blockOffset := readData(file, blockOFfset)
+	filter, _ := bloomFilter.DeserializeFromBytes(data)
+	return filter, blockOffset
+}
+
+// Takes pointer to file ending in "compact.bin" or "data.bin" and returns
+// deserialized Merkle tree and new block offset
+func fetchMerkleTree(file *os.File) (*MerkleTree, uint64) {
+	fileName := file.Name()
+	var merkleFile *os.File
+	var err error
+	if strings.HasSuffix(fileName, "data.bin") {
+		merklePath := strings.Replace(fileName, "data.bin", "tree.bin", 1)
+		merkleFile, err = os.Open(merklePath)
+		if err != nil {
+			panic(err)
+		}
+	} else {
+		merkleFile = file
+	}
+	blockOffset := getMerkleTreeOffset(merkleFile)
+	data, blockOffset := readData(merkleFile, blockOffset)
+	tree, _ := deserializeMerkleTree(data)
+	return tree, blockOffset
+}
+
+func getMerkleTreeOffset(file *os.File) uint64 {
+	fileName := file.Name()
+	if strings.HasSuffix(fileName, "tree.bin") {
+		return 0
+	} else if !strings.HasSuffix(fileName, "compact.bin") {
+		panic(fmt.Sprintf("wrong file suffix, expected %s got %s", "compact.bin", fileName))
+	}
+
+	footer := getFooter(file).GetData()
+	blockHeader := 9
+	merkleOffset := binary.LittleEndian.Uint64(footer[blockHeader+5*8 : blockHeader+6*8])
+	return merkleOffset
+}

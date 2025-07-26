@@ -292,7 +292,7 @@ func getBlockEntriesTypeSplit(block *blockManager.Block, file *os.File, offset u
 // limits will be read. The first 9 bytes are block header, and 8 bytes after are representing the start
 // of the index segment (aka the end of data segment).
 // If the file is not compact, the limit is the index of the last block + 1.
-func getLimits(files []*os.File) []uint64 {
+func GetLimits(files []*os.File) []uint64 {
 	var tableLimits []uint64 = make([]uint64, len(files))
 	for index, file := range files {
 		fileName := file.Name()
@@ -327,7 +327,7 @@ func MergeTables(filesArg []*os.File, newFilePath string) {
 	copy(files, filesArg)                                     //copies so the filesArg isn't updated while this function is running
 	var entryArrays [][]*Entry = make([][]*Entry, len(files)) //entries for each iteration of block read are put here
 
-	var tableLimits []uint64 = getLimits(files) //array of limits for all files
+	var tableLimits []uint64 = GetLimits(files) //array of limits for all files
 	var filesBlockOffsets []uint64 = make([]uint64, len(files))
 
 	var tracker *Tracker = initTracker()
