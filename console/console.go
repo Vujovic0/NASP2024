@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/Vujovic0/NASP2024/config"
 	"github.com/Vujovic0/NASP2024/lruCache"
@@ -65,12 +64,12 @@ func Start() {
 
 	config.LoadConfig()
 
-	tokenBucket := tokenBucket.NewTokenBucket(config.TokensNum, time.Duration(config.ResetingIntervalMs)*time.Millisecond)
 	lruCacheFactory := lruCache.NewLRUCache(config.CacheSize)
 
 	walFactory := wal.NewWAL(config.GlobalBlockSize, config.BlocksInSegment)
 	memtable := memtableStructures.NewMemTableManager(1)
 	walFactory.LoadWALLogs(memtable)
+	tokenBucket := tokenBucket.LoadOrCreateTokenBucket(walFactory, memtable, lruCacheFactory)
 
 	/*valueBytes, found := FindValue(strings.Repeat("x", 5000), lruCacheFactory, memtable)
 	if found != 0 {

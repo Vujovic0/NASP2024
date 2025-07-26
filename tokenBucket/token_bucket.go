@@ -2,6 +2,7 @@ package tokenBucket
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Vujovic0/NASP2024/config"
@@ -69,6 +70,33 @@ func (tb *TokenBucket) Consume(walFactory *wal.WAL, memtable *memtableStructures
 	value := fmt.Sprintf("%d;%s", tb.Tokens, tb.LastRefillTime.Format(time.RFC3339))
 	systemOps.SystemPut(walFactory, memtable, lruCache, config.TokenBucketStateKey, value)
 	return false
+}
+
+// Funkcija ucitava token bucket iz sistema ili kreira novi ako ne postoji
+func LoadOrCreateTokenBucket(walFactory *wal.WAL, memtable *memtableStructures.MemTableManager, lruCache *lruCache.LRUCache) *TokenBucket {
+	tbState, found := systemOps.SystemGet(lruCache, memtable, config.TokenBucketStateKey)
+	if found {
+		parts := strings.Split(tbState, ";")
+		if len(parts) == 2 {
+			var tokens int
+			// Parsiranje tokena i vremena poslednjeg punjenja
+			fmt.Sscanf(parts[0], "%d", &tokens)
+			lastRefill, err := time.Parse(time.RFC3339, parts[1])
+			if err == nil {
+				return &TokenBucket{
+					Capacity:       config.TokensNum,
+					Tokens:         tokens,
+					TimeInterval:   time.Duration(config.ResetingIntervalMs) * time.Millisecond,
+					LastRefillTime: lastRefill,
+				}
+			}
+		}
+	}
+	// Ako nije pronadjen, kreiramo novi i upisujemo u sistem
+	tb := NewTokenBucket(config.TokensNum, time.Duration(config.ResetingIntervalMs)*time.Millisecond)
+	value := fmt.Sprintf("%d;%s", tb.Tokens, tb.LastRefillTime.Format(time.RFC3339))
+	systemOps.SystemPut(walFactory, memtable, lruCache, config.TokenBucketStateKey, value)
+	return tb
 }
 
 func (tb *TokenBucket) UserConfig() (int, time.Duration) {
