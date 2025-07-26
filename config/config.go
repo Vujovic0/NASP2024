@@ -185,6 +185,7 @@ func comparePreviousToNewConfig(newConfig *Config) {
 			if input == "y" {
 				err := DeleteOldData()
 				if err != nil {
+					fmt.Println(err)
 					fmt.Println("Stopping the program.")
 					os.Exit(0)
 				}
@@ -222,6 +223,7 @@ func comparePreviousToNewConfig(newConfig *Config) {
 			if input == "y" {
 				err := DeleteOldData()
 				if err != nil {
+					fmt.Println(err)
 					fmt.Println("Stopping the program.")
 					os.Exit(0)
 				}
@@ -290,6 +292,9 @@ func LoadPreviousConfig() *Config {
 
 func DeleteFolderData(folderPath string) error {
 	entries, err := os.ReadDir(folderPath)
+	if os.IsNotExist(err) {
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("failed to read directory: %w", err)
 	}
@@ -313,7 +318,7 @@ func DeleteOldData() error {
 
 	// DELETE SSTABLE DATA
 	err := DeleteFolderData(ssTableDataFolderpath)
-	if err != nil {
+	if !os.IsNotExist(err) && err != nil {
 		return fmt.Errorf("Failed to delete SSTable data: %w", err)
 	}
 
