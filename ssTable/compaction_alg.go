@@ -72,7 +72,8 @@ func extractGeneration(filePath string) int {
 // Compacts only when there are at least `threshold` files of similar size (+/- margin).
 func SizeTieredCompaction(level int) {
 	inputDir := filepath.Join(getDataPath(), fmt.Sprintf("L%d", level))
-	_ = os.MkdirAll(inputDir, 0755)
+	outputDir := filepath.Join(getDataPath(), fmt.Sprintf("L%d", level+1))
+	_ = os.MkdirAll(outputDir, 0755)
 
 	files, err := os.ReadDir(inputDir)
 	if err != nil {
@@ -80,35 +81,52 @@ func SizeTieredCompaction(level int) {
 	}
 
 	var filePointers []*os.File
+	var fileNames []string
+
 	for _, entry := range files {
 		name := entry.Name()
 		if strings.HasSuffix(name, "-data.bin") || strings.HasSuffix(name, "-compact.bin") {
-			fp, err := os.Open(filepath.Join(inputDir, name))
+			fullPath := filepath.Join(inputDir, name)
+			fp, err := os.Open(fullPath)
 			if err != nil {
 				continue
 			}
 			filePointers = append(filePointers, fp)
+			fileNames = append(fileNames, fullPath)
 		}
 	}
 
-	if len(filePointers) <= 1 {
-		fmt.Println("No need to compact, only one or zero files in level", level)
+	if len(filePointers) < config.TablesCount {
+		fmt.Printf("Not enough files to compact in L%d. Found %d, need at least %d.\n", level, len(filePointers), config.TablesCount)
 		return
 	}
 
+	writeToSameLevel := (level+1 >= config.MaxLevels)
+	targetLevel := level
+	if !writeToSameLevel {
+		targetLevel = level + 1
+	}
+
+	targetDir := filepath.Join(getDataPath(), fmt.Sprintf("L%d", targetLevel))
+	_ = os.MkdirAll(targetDir, 0755)
+
 	var outputFile string
 	if config.VariableHeader {
-		outputFile = filepath.Join(inputDir, fmt.Sprintf("usertable-%d-compact.bin", GetGeneration(false)))
+		outputFile = filepath.Join(targetDir, fmt.Sprintf("usertable-%d-compact.bin", GetGeneration(false)))
 	} else {
-		outputFile = filepath.Join(inputDir, fmt.Sprintf("usertable-%d-data.bin", GetGeneration(false)))
+		outputFile = filepath.Join(targetDir, fmt.Sprintf("usertable-%d-data.bin", GetGeneration(false)))
 	}
 
 	MergeTables(filePointers, outputFile)
 
-	for _, f := range filePointers {
+	for i, f := range filePointers {
 		_ = f.Close()
-		_ = os.Remove(f.Name())
+		_ = os.Remove(fileNames[i])
 	}
 
-	fmt.Println("Size-tiered compaction complete: merged", len(filePointers), "files in L", level)
+	fmt.Printf("Size-tiered compaction complete: L%d ➝ L%d (%d files ➝ 1)\n", level, targetLevel, len(filePointers))
+
+	if !writeToSameLevel {
+		SizeTieredCompaction(targetLevel)
+	}
 }
