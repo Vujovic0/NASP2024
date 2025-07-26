@@ -13,7 +13,7 @@ const (
 	HEADER_SIZE       = 38
 )
 
-var bc *blockCache[*Block] = InitBlockCache[*Block](50)
+var bc *blockCache[*Block] = InitBlockCache[*Block](config.BlockManagerCacheSize)
 
 var blockSize = config.GlobalBlockSize
 
