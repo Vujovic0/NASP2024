@@ -30,7 +30,7 @@ func getTableNameByGeneration(generation int) string {
 		tableGeneration, err := strconv.Atoi(splitTablePath[1])
 
 		if err != nil {
-			panic(fmt.Sprintf("can not convert %s to int", tableGeneration))
+			panic(fmt.Sprintf("can not convert %s to int", splitTablePath[1]))
 		}
 
 		if generation == tableGeneration {
