@@ -3,6 +3,7 @@ package systemOps
 import (
 	"github.com/Vujovic0/NASP2024/lruCache"
 	"github.com/Vujovic0/NASP2024/memtableStructures"
+	"github.com/Vujovic0/NASP2024/ssTable"
 	"github.com/Vujovic0/NASP2024/wal"
 )
 
@@ -27,6 +28,10 @@ func SystemGet(lruCache *lruCache.LRUCache, memtableMenager *memtableStructures.
 	value, found := lruCache.Get(key)
 	if found {
 		return string(value), true
+	}
+	valueBytes := ssTable.SearchAll([]byte(key), false)
+	if len(valueBytes) > 0 {
+		return string(valueBytes), true
 	}
 	return "", false
 }
