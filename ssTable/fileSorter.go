@@ -50,7 +50,7 @@ func sortTableNames(names []string) []string {
 func getLevelNames(filePath string) []string {
 	dirs, err := os.ReadDir(filePath)
 	if err != nil {
-		panic(err)
+		return nil
 	}
 
 	levelsString := getLevelsStrings(dirs)
@@ -138,6 +138,9 @@ Returns a slice of filepaths for the correct search order of sstables
 */
 func GetReadOrder(dataPath string) []string {
 	levels := getLevelNames(dataPath)
+	if levels == nil{
+		return nil
+	}
 	levelPaths := getLevelPaths(dataPath, levels)
 	orderedPaths := make([]string, 0)
 	for _, levelPath := range levelPaths {

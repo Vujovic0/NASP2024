@@ -224,15 +224,13 @@ func GetGeneration(increment bool) uint64 {
 // Entires of data are |CRC|TIMESTAMP|TOMBSTONE|KEYSIZE|VALUESIZE|KEY|VALUE
 func CreateCompactSSTable(data []byte, lastElementData []byte, summary_sparsity int, index_sparsity int, filter *bloomFilter.BloomFilter, tree *MerkleTree) {
 	dataPath := getDataPath()
-	if _, err := os.Stat(dataPath); os.IsNotExist(err) {
-		err := os.Mkdir(dataPath, 0755)
-		if err != nil {
-			panic(err)
-		}
-		err = os.Mkdir(dataPath+string(os.PathSeparator)+"L0", 0755)
-		if err != nil {
-			panic(err)
-		}
+	err := os.Mkdir(dataPath, 0755)
+	if err != nil {
+		panic(err)
+	}
+	err = os.Mkdir(dataPath+string(os.PathSeparator)+"L0", 0755)
+	if err != nil {
+		panic(err)
 	}
 
 	generation := GetGeneration(true)
@@ -350,15 +348,13 @@ func CreateCompactSSTable(data []byte, lastElementData []byte, summary_sparsity 
 // Entires of data are |CRC|TIMESTAMP|TOMBSTONE|KEYSIZE|VALUESIZE|KEY|VALUE
 func CreateSeparatedSSTable(data []byte, lastElementData []byte, summary_sparsity int, index_sparsity int, filter *bloomFilter.BloomFilter, tree *MerkleTree) {
 	dataPath := getDataPath()
-	if _, err := os.Stat(dataPath); os.IsNotExist(err) {
-		err := os.Mkdir(dataPath, 0755)
-		if err != nil {
-			panic(err)
-		}
-		err = os.Mkdir(dataPath+string(os.PathSeparator)+"L0", 0755)
-		if err != nil {
-			panic(err)
-		}
+	err := os.Mkdir(dataPath, 0755)
+	if err != nil {
+		panic(err)
+	}
+	err = os.Mkdir(dataPath+string(os.PathSeparator)+"L0", 0755)
+	if err != nil {
+		panic(err)
 	}
 
 	generation := GetGeneration(true)

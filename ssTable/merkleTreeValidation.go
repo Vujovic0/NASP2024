@@ -43,7 +43,7 @@ func getTableNameByGeneration(generation int) string {
 func getCrc32Values(file *os.File) []uint32 {
 	limit := GetLimits([]*os.File{file})[0]
 	blockOffset := uint64(0)
-	entries := make([]*Entry, 0)
+	var entries []*Entry
 	var err error
 	crc32Values := make([]uint32, 0)
 	for {
