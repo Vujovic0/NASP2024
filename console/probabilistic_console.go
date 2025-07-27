@@ -217,31 +217,25 @@ func DeleteExistingInstance(typeInput int, wal *wal.WAL, memtable *memtableStruc
 
 func ReadInputValues() []string {
 	var stringovi []string
+	reader := bufio.NewReader(os.Stdin)
+
 	for {
-		fmt.Print("Enter a value you want to input: ")
-		reader := bufio.NewReader(os.Stdin)
-		// CLEANING LEFTOVERS FROM LAST INPUT
-		for {
-			b, err := reader.Peek(1)
-			if err != nil {
-				break
-			}
-			if b[0] == '\n' || b[0] == '\r' {
-				_, _ = reader.ReadByte()
-			} else {
-				break
-			}
-		}
+		fmt.Print("Enter a value you want to input (or press Enter to finish): ")
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			fmt.Println("Error reading input:", err)
 			return nil
 		}
-		if len(line) == 0 {
+
+		line = strings.TrimSpace(line)
+
+		if line == "" {
 			break
 		}
-		stringovi = append(stringovi, strings.TrimRight(line, "\r\n"))
+
+		stringovi = append(stringovi, line)
 	}
+
 	return stringovi
 }
 
