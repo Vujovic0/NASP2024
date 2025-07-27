@@ -211,12 +211,12 @@ func FindValue(inputKey string, lruCache *lruCache.LRUCache, memtableMenager *me
 	value, found := lruCache.Get(inputKey)
 	if found {
 		lruCache.Put(inputKey, value)
-		return element.Value, 2
+		return value, 2
 	}
 	valueBytes := ssTable.SearchAll([]byte(inputKey), false)
 	if len(valueBytes) > 0 {
 		lruCache.Put(inputKey, valueBytes)
-		return element.Value, 3
+		return valueBytes, 3
 	}
 	return []byte{}, 0
 }
