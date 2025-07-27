@@ -230,6 +230,10 @@ func Get(lruCache *lruCache.LRUCache, memtableMenager *memtableStructures.MemTab
 	if inputKey == "" {
 		return
 	}
+	if hasProbabilisticPrefix(inputKey) {
+		PrintPrefixError()
+		return
+	}
 	if inputKey == config.TokenBucketStateKey {
 		fmt.Println("Error: This key is reserved for system use and cannot be accessed by users.")
 		return
@@ -263,6 +267,10 @@ func Delete(walFactory *wal.WAL, mtm *memtableStructures.MemTableManager, lruCac
 	}
 	inputKey := InputValue("Enter the key: ")
 	if inputKey == "" {
+		return
+	}
+	if hasProbabilisticPrefix(inputKey) {
+		PrintPrefixError()
 		return
 	}
 	if inputKey == config.TokenBucketStateKey {
