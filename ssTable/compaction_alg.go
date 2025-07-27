@@ -111,10 +111,10 @@ func SizeTieredCompaction(level int) {
 	_ = os.MkdirAll(targetDir, 0755)
 
 	var outputFile string
-	if config.VariableHeader {
-		outputFile = filepath.Join(targetDir, fmt.Sprintf("usertable-%d-compact.bin", GetGeneration(false)))
-	} else {
+	if config.SeparateFiles {
 		outputFile = filepath.Join(targetDir, fmt.Sprintf("usertable-%d-data.bin", GetGeneration(false)))
+	} else {
+		outputFile = filepath.Join(targetDir, fmt.Sprintf("usertable-%d-compact.bin", GetGeneration(false)))
 	}
 
 	MergeTables(filePointers, outputFile)
@@ -122,6 +122,13 @@ func SizeTieredCompaction(level int) {
 	for i, f := range filePointers {
 		_ = f.Close()
 		_ = os.Remove(fileNames[i])
+		if strings.HasSuffix(fileNames[i], "data.bin"){
+			filePrefix := strings.TrimSuffix(fileNames[i], "data.bin")
+			_ = os.Remove(filePrefix + "tree.bin")
+			_ = os.Remove(filePrefix + "index.bin")
+			_ = os.Remove(filePrefix + "summary.bin")
+			_ = os.Remove(filePrefix + "filter.bin")
+		}
 	}
 
 	fmt.Printf("Size-tiered compaction complete: L%d ➝ L%d (%d files ➝ 1)\n", level, targetLevel, len(filePointers))
