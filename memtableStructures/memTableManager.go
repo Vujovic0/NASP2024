@@ -480,6 +480,7 @@ func (mtm *MemTableManager) FlushMemTableToSSTable(memTable *MemoryTable, tableI
 			)
 			fmt.Printf(" SSTable_%d kreiran (SEPARATED format) sa %d elemenata\n", tableIndex, len(elements))
 		}
+		ssTable.SizeTieredCompaction(0)
 	} else {
 		fmt.Printf(" MemTable_%d je prazna, preskacem flush\n", tableIndex)
 	}
