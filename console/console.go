@@ -244,13 +244,13 @@ func Get(lruCache *lruCache.LRUCache, memtableMenager *memtableStructures.MemTab
 		fmt.Println("There is no value for input key {" + inputKey + "}")
 	case 1:
 		fmt.Println("Found value {" + string(value) + "} for input key {" + inputKey + "}")
-		fmt.Println("Value founded in Memtable")
+		fmt.Println("Value found in Memtable")
 	case 2:
 		fmt.Println("Found value {" + string(value) + "} for input key {" + inputKey + "}")
-		fmt.Println("Value founded in LRU Cache")
+		fmt.Println("Value found in LRU Cache")
 	case 3:
 		fmt.Println("Found value {" + string(value) + "} for input key {" + inputKey + "}")
-		fmt.Println("Value founded in SS Table")
+		fmt.Println("Value found in SS Table")
 	case 4:
 		fmt.Println("There was an error for getting value of key {" + inputKey + "}")
 	}
