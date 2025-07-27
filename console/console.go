@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/Vujovic0/NASP2024/blockManager"
 	"github.com/Vujovic0/NASP2024/config"
 	"github.com/Vujovic0/NASP2024/lruCache"
 	"github.com/Vujovic0/NASP2024/memtableStructures"
@@ -64,6 +65,8 @@ func Start() {
 
 	config.LoadConfig()
 
+	blockManager.LoadBlockSize()
+	ssTable.LoadBlockSize()
 	lruCacheFactory := lruCache.NewLRUCache(config.CacheSize)
 
 	walFactory := wal.NewWAL(config.GlobalBlockSize, config.BlocksInSegment)
@@ -81,39 +84,39 @@ func Start() {
 	(*walFactory).WriteLogEntry(inputKey, []byte(inputValue), false)
 	memtable.Insert(inputKey, []byte(inputValue), false, walFactory.CurrentFile.Name(), walFactory.CurrentBlock, 0)*/
 
-	/*	//Small value
-		inputKey := "shortKey"
-		inputValue := "shortValue"
-		(*walFactory).WriteLogEntry(inputKey, inputValue)
-		memtable.Insert(inputKey, []byte(inputValue), walFactory.CurrentFile.Name(), walFactory.CurrentBlock, 0)
+	//Small value
+	/*inputKey := "shortKey"
+	inputValue := "shortValue"
+	(*walFactory).WriteLogEntry(inputKey, []byte(inputValue), false)
+	memtable.Insert(inputKey, []byte(inputValue), false, walFactory.CurrentFile.Name(), walFactory.CurrentBlock, 0)
 
-		// Medium value
-		inputKey = "mediumKey"
-		inputValue = strings.Repeat("x", 3000) // Still < 1 block
-		(*walFactory).WriteLogEntry(inputKey, inputValue)
-		memtable.Insert(inputKey, []byte(inputValue), walFactory.CurrentFile.Name(), walFactory.CurrentBlock, 0)
+	// Medium value
+	inputKey = "mediumKey"
+	inputValue = strings.Repeat("x", 3000) // Still < 1 block
+	(*walFactory).WriteLogEntry(inputKey, []byte(inputValue), false)
+	memtable.Insert(inputKey, []byte(inputValue), false, walFactory.CurrentFile.Name(), walFactory.CurrentBlock, 0)
 
-		// Large value (forces 2 blocks)
-		inputKey = "largeKey"
-		inputValue = strings.Repeat("y", 5000) // > 4096
-		(*walFactory).WriteLogEntry(inputKey, inputValue)
-		memtable.Insert(inputKey, []byte(inputValue), walFactory.CurrentFile.Name(), walFactory.CurrentBlock, 0)
+	// Large value (forces 2 blocks)
+	inputKey = "largeKey"
+	inputValue = strings.Repeat("y", 5000) // > 4096
+	(*walFactory).WriteLogEntry(inputKey, []byte(inputValue), false)
+	memtable.Insert(inputKey, []byte(inputValue), false, walFactory.CurrentFile.Name(), walFactory.CurrentBlock, 0)
 
-		// Huge value (forces 3+ blocks)
-		inputKey = "hugeKey"
-		inputValue = strings.Repeat("z", 10000) // > 2 blocks
-		(*walFactory).WriteLogEntry(inputKey, inputValue)
-		memtable.Insert(inputKey, []byte(inputValue), walFactory.CurrentFile.Name(), walFactory.CurrentBlock, 0)
+	// Huge value (forces 3+ blocks)
+	inputKey := "hugeKey"
+	inputValue := strings.Repeat("z", 10000) // > 2 blocks
+	(*walFactory).WriteLogEntry(inputKey, []byte(inputValue), false)
+	memtable.Insert(inputKey, []byte(inputValue), false, walFactory.CurrentFile.Name(), walFactory.CurrentBlock, 0)
 
-		inputKey = "shortKey2"
-		inputValue = "shortValue2"
-		(*walFactory).WriteLogEntry(inputKey, inputValue)
-		memtable.Insert(inputKey, []byte(inputValue), walFactory.CurrentFile.Name(), walFactory.CurrentBlock, 0)
+	inputKey = "shortKey2"
+	inputValue = "shortValue2"
+	(*walFactory).WriteLogEntry(inputKey, []byte(inputValue), false)
+	memtable.Insert(inputKey, []byte(inputValue), false, walFactory.CurrentFile.Name(), walFactory.CurrentBlock, 0)
 
-		inputKey = "shortKey3"
-		inputValue = "shortValue3"
-		(*walFactory).WriteLogEntry(inputKey, inputValue)
-		memtable.Insert(inputKey, []byte(inputValue), walFactory.CurrentFile.Name(), walFactory.CurrentBlock, 0)*/
+	inputKey = "shortKey3"
+	inputValue = "shortValue3"
+	(*walFactory).WriteLogEntry(inputKey, []byte(inputValue), false)
+	memtable.Insert(inputKey, []byte(inputValue), false, walFactory.CurrentFile.Name(), walFactory.CurrentBlock, 0)*/
 
 	if walFactory == nil {
 		fmt.Println("WAL was not initialized successfully")
@@ -199,6 +202,9 @@ func Put(walFactory *wal.WAL, mtm *memtableStructures.MemTableManager, lruCache 
 func FindValue(inputKey string, lruCache *lruCache.LRUCache, memtableMenager *memtableStructures.MemTableManager) ([]byte, int) {
 	element, found := memtableMenager.Search(inputKey)
 	if found {
+		if element == nil {
+			return []byte{}, 0
+		}
 		lruCache.Put(inputKey, element.Value)
 		return element.Value, 1
 	}
