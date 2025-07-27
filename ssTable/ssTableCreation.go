@@ -22,6 +22,10 @@ const (
 
 var blockSize uint64 = uint64(config.GlobalBlockSize)
 
+func LoadBlockSize() {
+	blockSize = uint64(config.GlobalBlockSize)
+}
+
 type channelResult struct {
 	Block *blockManager.Block
 	Key   []byte

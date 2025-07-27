@@ -181,7 +181,7 @@ func (mt *MemoryTable) Search(key string) (*Element, bool) {
 		}
 		if value.Tombstone {
 			//fmt.Println("Ne postoji element sa unetim kljucem!")
-			return nil, false
+			return nil, true
 		} else {
 			return value, true
 		}
@@ -194,7 +194,7 @@ func (mt *MemoryTable) Search(key string) (*Element, bool) {
 		}
 		if value.Tombstone {
 			//fmt.Println("Ne postoji element sa unetim kljucem!")
-			return nil, false
+			return nil, true
 		} else {
 			return value, true
 		}
@@ -207,7 +207,7 @@ func (mt *MemoryTable) Search(key string) (*Element, bool) {
 		}
 		if value.Tombstone {
 			//fmt.Println("Ne postoji element sa unetim kljucem!")
-			return nil, false
+			return nil, true
 		} else {
 			return value, true
 		}

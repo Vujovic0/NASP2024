@@ -1,10 +1,10 @@
 {
   "wal": {
-    "blocks_in_segment": 5
+    "blocks_in_segment": 3
   },
   "memtable": {
-    "elements_in_single_table": 10,
-    "tables_count": 3,
+    "elements_in_single_table": 2,
+    "tables_count": 2,
     "implementation_type": "skiplist"
   },
   "sstable": {
@@ -22,7 +22,7 @@
     "size": 5
   },
   "block_manager_and_cache": {
-    "block_size_in_b": 4097,
+    "block_size_in_b": 8096,
     "cache_size": 5
   },
   "token_bucket": {

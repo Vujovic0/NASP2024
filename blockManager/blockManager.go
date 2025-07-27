@@ -17,6 +17,10 @@ var bc *blockCache[*Block] = InitBlockCache[*Block](config.BlockManagerCacheSize
 
 var blockSize = config.GlobalBlockSize
 
+func LoadBlockSize() {
+	blockSize = config.GlobalBlockSize
+}
+
 // Takes pointer to file and the block that should be written
 // First checks if a block with the same filepath and offset is in cache, and adds it if not
 // If it is in cache, it shallow copies the new one and assigns it to the old one

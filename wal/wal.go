@@ -383,16 +383,24 @@ func (log LogEntry) SerializeLogEntry() []byte {
 	binary.LittleEndian.PutUint32(CRCbytes, uint32(CRC))
 	bytes = append(CRCbytes, bytes...)
 
-	//DeserializeLogEntry(bytes)
+	DeserializeLogEntry(bytes)
 
 	return bytes
 }
 
 func DeserializeLogEntry(data []byte) (LogEntry, bool) {
 
+	/*multiBlock := false
+	if len(data) > config.GlobalBlockSize-9 {
+		multiBlock = true
+	}*/
+
 	// CRC CHECK FIRST
 	expectedCRC := binary.LittleEndian.Uint32(data[:4])
 	payload := data[4:]
+	/*if multiBlock {
+		payload = data
+	}*/
 
 	offset := 0
 
@@ -431,7 +439,9 @@ func DeserializeLogEntry(data []byte) (LogEntry, bool) {
 	}
 	value := payload[offset : offset+valueLen]
 
-	actualCRC := crc32.ChecksumIEEE(payload[:offset+valueLen])
+	offset += valueLen
+
+	actualCRC := crc32.ChecksumIEEE(payload[:offset])
 
 	if expectedCRC != actualCRC {
 		fmt.Println("There was a CRC error while deserializing WAL...")
@@ -563,6 +573,8 @@ func (wal *WAL) LoadWALLogs(memtable *memtableStructures.MemTableManager) {
 				}
 				reading = true
 				wholeBlockData = make([]byte, 0)
+				// FIRST ADDING CRC SO WE CAN CHECK IT ON WAL LOADING
+				//wholeBlockData = append(wholeBlockData, block.GetData()[:4]...)
 				wholeBlockData = append(wholeBlockData, block.GetData()[9:]...)
 				wal.CurrentBlock += 1
 			case 2:
