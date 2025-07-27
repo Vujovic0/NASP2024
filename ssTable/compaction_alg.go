@@ -112,9 +112,9 @@ func SizeTieredCompaction(level int) {
 
 	var outputFile string
 	if config.SeparateFiles {
-		outputFile = filepath.Join(targetDir, fmt.Sprintf("usertable-%d-data.bin", GetGeneration(false)))
+		outputFile = filepath.Join(targetDir, fmt.Sprintf("usertable-%d-data.bin", GetGeneration(true)))
 	} else {
-		outputFile = filepath.Join(targetDir, fmt.Sprintf("usertable-%d-compact.bin", GetGeneration(false)))
+		outputFile = filepath.Join(targetDir, fmt.Sprintf("usertable-%d-compact.bin", GetGeneration(true)))
 	}
 
 	MergeTables(filePointers, outputFile)
