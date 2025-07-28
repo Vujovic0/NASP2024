@@ -210,6 +210,9 @@ func FindValue(inputKey string, lruCache *lruCache.LRUCache, memtableMenager *me
 	}
 	value, found := lruCache.Get(inputKey)
 	if found {
+		if len(value) == 0 {
+			return []byte{}, 0
+		}
 		lruCache.Put(inputKey, value)
 		return value, 2
 	}

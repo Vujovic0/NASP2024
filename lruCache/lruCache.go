@@ -39,7 +39,10 @@ func (c *LRUCache) Put(key string, value []byte) {
 }
 
 func (c *LRUCache) Get(key string) ([]byte, bool) {
-	if node, exists := c.entries[key]; exists && !node.tombstone {
+	if node, exists := c.entries[key]; exists {
+		if node.tombstone {
+			return []byte{}, true
+		}
 		c.list.moveUp(node)
 		return node.value, true
 	}
