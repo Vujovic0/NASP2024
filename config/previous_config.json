@@ -10,7 +10,7 @@
   "sstable": {
     "summary_sparsity": 5,
     "index_sparsity": 5,
-    "separate_files": false,
+    "separate_files": true,
     "compression": false,
     "variable_header": false
   },
@@ -22,7 +22,7 @@
     "size": 5
   },
   "block_manager_and_cache": {
-    "block_size_in_b": 8192,
+    "block_size_in_b": 4096,
     "cache_size": 5
   },
   "token_bucket": {

@@ -10,7 +10,7 @@
   "sstable": {
     "summary_sparsity": 5,
     "index_sparsity": 5,
-    "separate_files": false,
+    "separate_files": true,
     "compression": false,
     "variable_header": false
   },
