@@ -71,6 +71,7 @@ func extractGeneration(filePath string) int {
 // SizeTieredCompaction performs compaction on files of similar size within a level (default: L0).
 // Compacts only when there are at least `threshold` files of similar size (+/- margin).
 func SizeTieredCompaction(level int) {
+
 	inputDir := filepath.Join(getDataPath(), fmt.Sprintf("L%d", level))
 	outputDir := filepath.Join(getDataPath(), fmt.Sprintf("L%d", level+1))
 	_ = os.MkdirAll(outputDir, 0755)
@@ -91,6 +92,7 @@ func SizeTieredCompaction(level int) {
 			if err != nil {
 				continue
 			}
+			defer fp.Close()
 			filePointers = append(filePointers, fp)
 			fileNames = append(fileNames, fullPath)
 		}
@@ -120,9 +122,12 @@ func SizeTieredCompaction(level int) {
 	MergeTables(filePointers, outputFile)
 
 	for i, f := range filePointers {
-		_ = f.Close()
-		_ = os.Remove(fileNames[i])
-		if strings.HasSuffix(fileNames[i], "data.bin"){
+		f.Close()
+		err = os.Remove(fileNames[i])
+		if err != nil {
+			print(err)
+		}
+		if strings.HasSuffix(fileNames[i], "data.bin") {
 			filePrefix := strings.TrimSuffix(fileNames[i], "data.bin")
 			_ = os.Remove(filePrefix + "tree.bin")
 			_ = os.Remove(filePrefix + "index.bin")

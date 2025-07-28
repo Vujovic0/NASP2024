@@ -360,6 +360,7 @@ func MergeTables(filesArg []*os.File, newFilePath string) {
 		entry := entryArrays[i][0]
 		keyStr := string(entry.key)
 		if _, exists := keyEntryMap[keyStr]; exists {
+
 			updateTableElement(
 				tableLimits,
 				files,
@@ -463,7 +464,7 @@ func updateTableElement(
 		//check if the key was already loaded onto heap
 		if existingEntry, exists := keyEntryMap[string(entryToAdd.key)]; exists {
 			//if entry is older, truncate entries
-			if entryToAdd.timeStamp < existingEntry.timeStamp {
+			if entryToAdd.timeStamp <= existingEntry.timeStamp {
 				entryArrays[tableIndex] = entryArrays[tableIndex][1:]
 				continue
 			}
