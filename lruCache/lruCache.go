@@ -18,6 +18,10 @@ func NewLRUCache(capacity int) *LRUCache {
 func (c *LRUCache) Put(key string, value []byte) {
 	if node, exists := c.entries[key]; exists {
 		node.value = value
+		if node.tombstone {
+			node.tombstone = false
+			c.size++
+		}
 		c.list.moveUp(node)
 		return
 	}
@@ -35,7 +39,7 @@ func (c *LRUCache) Put(key string, value []byte) {
 }
 
 func (c *LRUCache) Get(key string) ([]byte, bool) {
-	if node, exists := c.entries[key]; exists {
+	if node, exists := c.entries[key]; exists && !node.tombstone {
 		c.list.moveUp(node)
 		return node.value, true
 	}
@@ -43,9 +47,8 @@ func (c *LRUCache) Get(key string) ([]byte, bool) {
 }
 
 func (c *LRUCache) Remove(key string) {
-	if node, exists := c.entries[key]; exists {
-		c.list.remove(node)
-		delete(c.entries, key)
+	if node, exists := c.entries[key]; exists && !node.tombstone {
+		node.tombstone = true
 		c.size--
 	}
 }
