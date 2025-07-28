@@ -56,7 +56,8 @@ func getCrc32Values(file *os.File) []uint32 {
 		}
 
 		for _, entry := range entries {
-			crc32Values = append(crc32Values, entry.crc)
+			element := entryToElement(entry)
+			crc32Values = append(crc32Values, hashElement(element))
 		}
 	}
 
@@ -67,6 +68,7 @@ func getCrc32Values(file *os.File) []uint32 {
 func ValidateSSTable(generation int) (string, bool) {
 	tablePath := getTableNameByGeneration(generation)
 	if tablePath == "" {
+		fmt.Println("Table with this generation doesn't exist")
 		return "", false
 	}
 	file := getFilePointer(tablePath)
@@ -74,13 +76,13 @@ func ValidateSSTable(generation int) (string, bool) {
 	constructedMerkleTree := constructTree(file)
 
 	if constructedMerkleTree == nil {
-		fmt.Println("Tabela sa ovom generacijom ne postoji...")
 		return "", false
 	}
 
 	deserializedMerkleTree, _ := fetchMerkleTree(file)
 	differences := FindAllLeafMerkleDifferences(deserializedMerkleTree, constructedMerkleTree)
 	if len(differences) == 0 {
+		fmt.Println("No bad hashes found")
 		return tablePath, true
 	}
 	printBadHashes(differences)
@@ -102,5 +104,14 @@ func printBadHashes(differences []MerkleDiff) {
 	fmt.Println("Errors were found during validation:")
 	for _, difference := range differences {
 		fmt.Printf("expected: %d got: %d", difference.HashOld, difference.HashNew)
+	}
+}
+
+func entryToElement(entry *Entry) *Element {
+	return &Element{
+		Key:       string(entry.key),
+		Value:     entry.value,
+		Tombstone: entry.tombstone,
+		Timestamp: int64(entry.timeStamp),
 	}
 }

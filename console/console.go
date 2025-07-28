@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/Vujovic0/NASP2024/blockManager"
@@ -124,7 +125,7 @@ func Start() {
 		fmt.Println("WAL was inizialized successfully")
 	}
 	for {
-		fmt.Print("--Main menu--\n 1. PUT\n 2. GET\n 3. DELETE\n 4. INFO\n 5. PROBABILISTIC STRUCTURES\n 0. EXIT\n Choose one of the options above: ")
+		fmt.Print("--Main menu--\n 1. PUT\n 2. GET\n 3. DELETE\n 4. INFO\n 5. PROBABILISTIC STRUCTURES\n 6. VALIDATE TABLE \n 0. EXIT\n Choose one of the options above: ")
 		var input int
 		_, error := fmt.Scan(&input)
 		if error != nil {
@@ -144,6 +145,8 @@ func Start() {
 			fmt.Println("AGREEMENT: Pair key:value from the perspective of the user are both in type string, but after the input, program restore the value into binary form.\n ...")
 		case 5:
 			LoadProbabilisticConsole(walFactory, memtable, lruCacheFactory, tokenBucket)
+		case 6:
+			ValidateSSTable(walFactory, memtable, lruCacheFactory, tokenBucket)
 		case 0:
 			fmt.Println("Exiting...")
 			return
@@ -292,6 +295,23 @@ func Delete(walFactory *wal.WAL, mtm *memtableStructures.MemTableManager, lruCac
 	}
 	lruCache.Remove(inputKey)
 	fmt.Println("Log with key {" + inputKey + "} is deleted.")
+}
+
+func ValidateSSTable(walFactory *wal.WAL, mtm *memtableStructures.MemTableManager, lruCache *lruCache.LRUCache, tokenBucket *tokenBucket.TokenBucket) {
+	if !tokenBucket.Consume(walFactory, mtm, lruCache) {
+		fmt.Println("Rate limit exceeded. Please wait before next operation.")
+		return
+	}
+	genInput := InputValue("Enter generation: ")
+	if genInput == "" {
+		return
+	}
+	generation, err := strconv.Atoi(genInput)
+	if err != nil {
+		fmt.Printf("converting %s to integer failed \n", genInput)
+		return
+	}
+	ssTable.ValidateSSTable(generation)
 }
 
 func stringToBin(s string) (binString string) {
