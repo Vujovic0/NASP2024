@@ -3,9 +3,9 @@
     "blocks_in_segment": 3
   },
   "memtable": {
-    "elements_in_single_table": 2,
+    "elements_in_single_table": 5,
     "tables_count": 2,
-    "implementation_type": "skiplist"
+    "implementation_type": "hashMap"
   },
   "sstable": {
     "summary_sparsity": 5,
