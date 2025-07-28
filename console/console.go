@@ -182,16 +182,16 @@ func Put(walFactory *wal.WAL, mtm *memtableStructures.MemTableManager, lruCache 
 		PrintPrefixError()
 		return "", ""
 	}
-	binInputValue := stringToBin(inputValue)
-	fmt.Println(binInputValue) // Writing the binary form, just for the sakes of not giving error
+	//binInputValue := stringToBin(inputValue)
+	//fmt.Println(binInputValue) // Writing the binary form, just for the sakes of not giving error
 	if walFactory == nil {
-		fmt.Println("WAL nije uspešno inicijalizovan")
+		//fmt.Println("WAL nije uspešno inicijalizovan")
 	}
 	offset, err := (*walFactory).WriteLogEntry(inputKey, []byte(inputValue), false)
 	if err == nil {
 		mtm.Insert(inputKey, []byte(inputValue), false, walFactory.CurrentFile.Name(), walFactory.CurrentBlock, offset)
 		lruCache.Put(inputKey, []byte(inputValue))
-		fmt.Println("Uspesno unet WAL")
+		//fmt.Println("Uspesno unet WAL")
 	} else {
 		fmt.Println("Neuspesno unet WAL")
 	}
@@ -286,7 +286,7 @@ func Delete(walFactory *wal.WAL, mtm *memtableStructures.MemTableManager, lruCac
 	if err == nil {
 		mtm.Insert(inputKey, []byte(""), true, walFactory.CurrentFile.Name(), walFactory.CurrentBlock, offset)
 		//lruCache.Put(inputKey, inputValue)
-		fmt.Println("Uspesno unet WAL")
+		//fmt.Println("Uspesno unet WAL")
 	} else {
 		fmt.Println("Neuspesno unet WAL")
 	}

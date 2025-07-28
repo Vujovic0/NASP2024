@@ -531,8 +531,9 @@ func (wal *WAL) LoadWALLogs(memtable *memtableStructures.MemTableManager) {
 		fullPath := "./wal/wals/" + wal.walNames[fileIndex]
 		file, err := os.Open(fullPath)
 		if err != nil {
-			fmt.Errorf("failed to open WAL file %s: %v", wal.walNames[fileIndex], err)
-			fmt.Println(err)
+			//fmt.Errorf("failed to open WAL file %s: %v", wal.walNames[fileIndex], err)
+			//fmt.Println(err)
+			panic(err)
 		}
 
 		if fileIndex == startingFileIndex {
@@ -618,7 +619,7 @@ func (wal *WAL) LoadWALLogs(memtable *memtableStructures.MemTableManager) {
 				wholeBlockData = append(wholeBlockData, block.GetData()[9:]...)
 				reading = false
 				log, _ := DeserializeLogEntry(wholeBlockData)
-				fmt.Println(log)
+				// fmt.Println(log)
 				memtable.Insert(log.Key, log.Value, log.Tombstone, wal.walNames[fileIndex], wal.CurrentBlock, 0)
 				wal.CurrentBlock += 1
 			}

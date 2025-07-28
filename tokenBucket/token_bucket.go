@@ -62,7 +62,7 @@ func (tb *TokenBucket) Consume(walFactory *wal.WAL, memtable *memtableStructures
 	if tb.Tokens > 0 {
 		// Consume one token
 		tb.Tokens--
-		fmt.Println("Token consumed!")
+		//fmt.Println("Token consumed!")
 		return true
 	}
 	fmt.Println("No tokens available.")
