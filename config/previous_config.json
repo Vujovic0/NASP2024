@@ -22,7 +22,7 @@
     "size": 5
   },
   "block_manager_and_cache": {
-    "block_size_in_b": 8096,
+    "block_size_in_b": 8192,
     "cache_size": 5
   },
   "token_bucket": {

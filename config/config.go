@@ -147,7 +147,10 @@ func LoadConfig() (*Config, error) {
 			fmt.Println("You need to input valid option! (y/n)")
 		}
 	}
-	// DODAJ DA SE UPOREĐUJE STARI I NOVI CONFIG
+	if newConfig.BlockManagerCache.BlockSizeB != 4096 && newConfig.BlockManagerCache.BlockSizeB != 8192 && newConfig.BlockManagerCache.BlockSizeB != 16384 {
+		fmt.Println("Block size needs to be 4096, 8192 or 16384 bytes!")
+		os.Exit(0)
+	}
 	comparePreviousToNewConfig(&newConfig)
 	SetConfigValues(&newConfig)
 	SaveConfig(&newConfig)
