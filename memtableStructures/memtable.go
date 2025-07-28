@@ -139,31 +139,38 @@ func (mt *MemoryTable) Insert(key string, value []byte, tombstone bool) {
 		Tombstone: tombstone,
 	}
 
-	fmt.Printf("Inserting element: Key=%s, Value=%s\n", key, value)
-
 	if mt.Structure == "skiplist" {
 		skipList := mt.Data.(*SkipList)
-		skipList.insert(element.Key, element.Value, element.Timestamp, element.Tombstone)
-		mt.CurrentSize++
-		// if mt.CurrentSize >= int(mt.MaxSize) {
-		// 	mt.Flush()
-		// }
+		_, found := skipList.search(key)
+		if found {
+			fmt.Printf("Azuriran element: Key=%s, Value=%s\n", key, value)
+		} else {
+			fmt.Printf("Umetnut novi element: Key=%s, Value=%s\n", key, value)
+			mt.CurrentSize++
+		}
+		skipList.insert(key, value, element.Timestamp, tombstone)
+
 	} else if mt.Structure == "btree" {
 		bTree := mt.Data.(*BTree)
+		_, found := bTree.search(key)
+		if found {
+			fmt.Printf("Azuriran element: Key=%s, Value=%s\n", key, value)
+		} else {
+			fmt.Printf("Umetnut novi element: Key=%s, Value=%s\n", key, value)
+			mt.CurrentSize++
+		}
 		bTree.insert(element)
 
-		mt.CurrentSize++
-		// if mt.CurrentSize >= int(mt.MaxSize) {
-		// 	mt.Flush()
-		// }
 	} else if mt.Structure == "hashMap" {
 		hashMap := mt.Data.(*HashMap)
+		_, found := hashMap.search(key)
+		if found {
+			fmt.Printf("Azuriran element: Key=%s, Value=%s\n", key, value)
+		} else {
+			fmt.Printf("Umetnut novi element: Key=%s, Value=%s\n", key, value)
+			mt.CurrentSize++
+		}
 		hashMap.insert(element)
-
-		mt.CurrentSize++
-		// if mt.CurrentSize >= int(mt.MaxSize) {
-		// 	mt.Flush()
-		// }
 
 	} else {
 		log.Fatal("Nepoznata struktura memtable")
