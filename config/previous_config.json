@@ -5,7 +5,7 @@
   "memtable": {
     "elements_in_single_table": 5,
     "tables_count": 2,
-    "implementation_type": "btree"
+    "implementation_type": "hashMap"
   },
   "sstable": {
     "summary_sparsity": 5,

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Vujovic0/NASP2024/blockManager"
+	"github.com/Vujovic0/NASP2024/config"
 	"github.com/Vujovic0/NASP2024/memtableStructures"
 )
 
@@ -49,7 +50,27 @@ func NewWAL(blockSize int, segmentSize int) *WAL {
 	wal.blockSize = blockSize
 	wal.CurrentBlock = 0
 	offsetFilePath := "./wal/offset.bin"
+	walDirPath := "./wal/wals/"
 
+	// CHECKING FOR WALS FOLDER
+	if _, err := os.Stat(walDirPath); os.IsNotExist(err) {
+		err := os.MkdirAll(walDirPath, 0755)
+		if err != nil {
+			panic(fmt.Errorf("failed to create directory %s: %v", walDirPath, err))
+		}
+	}
+
+	// CHECKING IF THERE IS ANYITHING IN WALS
+	files, err := os.ReadDir(walDirPath)
+	if err != nil {
+		panic(fmt.Errorf("failed to read directory %s: %v", walDirPath, err))
+	}
+	if len(files) == 0 {
+		// IF NO WAL FILES ARE FOUND, WE CREATE ONE
+		wal.createFirstWalFile()
+	}
+
+	// OPEN OFFSET FILE OR CREATE IT
 	file, err := os.OpenFile(offsetFilePath, os.O_RDONLY, 066)
 	if os.IsNotExist(err) {
 		wal.createFirstOffsetFile()
@@ -60,8 +81,7 @@ func NewWAL(blockSize int, segmentSize int) *WAL {
 		// WE WILL DESERIALIZE OFFSET FILE LATER IN WAL LOADING
 	}
 
-	wal.walNames, wal.CurrentFile, _ = getWALFiles("./wal/wals/")
-	// sfmt.Print(wal.walNames)
+	wal.walNames, wal.CurrentFile, _ = getWALFiles(walDirPath)
 	return wal
 }
 
@@ -121,7 +141,10 @@ func (wal *WAL) createFirstOffsetFile() {
 	defer file.Close()
 
 	blockManager.WriteBlock(file, block)
+}
 
+func (wal *WAL) createFirstWalFile() {
+	var err error
 	wal.CurrentFile, err = os.Create("wal/wals/wal1.log")
 	if err != nil {
 		panic("Failed to create wal1.log: " + err.Error())
@@ -475,7 +498,7 @@ func deleteFile(path string) error {
 }
 
 func (wal *WAL) deleteOldWALSegments(fileIndex int) {
-	// WE DELETE FROM THE GIVEN FILE INDEX
+	// WE DELETE TO THE GIVEN FILE INDEX
 	for i := 0; i < fileIndex; i++ {
 		pathName := "./wal/wals/" + wal.walNames[i]
 		err := deleteFile(pathName)
@@ -490,7 +513,7 @@ func (wal *WAL) LoadWALLogs(memtable *memtableStructures.MemTableManager) {
 	var wholeBlockData []byte
 	var reading bool
 	loadingSegmentNameFull, loadingBlock, loadingOffset := wal.DeserializeOffsetFile()
-	var startingFileIndex int
+	var startingFileIndex = -1
 	loadingSegmentNameSplited := strings.Split(loadingSegmentNameFull, "/")
 	loadingSegmentName := loadingSegmentNameSplited[len(loadingSegmentNameSplited)-1]
 	for fileIndex := 0; fileIndex < len(wal.walNames); fileIndex++ {
@@ -498,6 +521,11 @@ func (wal *WAL) LoadWALLogs(memtable *memtableStructures.MemTableManager) {
 			startingFileIndex = fileIndex
 			break
 		}
+	}
+	if startingFileIndex == -1 {
+		fmt.Println("WAL file specified in offset.bin was not found...")
+		fmt.Println("Deleting all the old data to continue...")
+		config.DeleteOldData()
 	}
 	for fileIndex := startingFileIndex; fileIndex < len(wal.walNames); fileIndex++ {
 		fullPath := "./wal/wals/" + wal.walNames[fileIndex]

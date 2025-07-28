@@ -1,14 +1,15 @@
 package lruCache
 
 type Node struct {
-	previous *Node
-	next     *Node
-	key      string
-	value    []byte
+	previous  *Node
+	next      *Node
+	key       string
+	value     []byte
+	tombstone bool
 }
 
 func newNode(key string, value []byte) *Node {
-	return &Node{key: key, value: value}
+	return &Node{key: key, value: value, tombstone: false}
 }
 
 type priorityList struct {
